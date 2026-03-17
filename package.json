@@ -1,0 +1,43 @@
+{
+  "name": "callsheet",
+  "version": "0.1.0",
+  "description": "AI-generated daily printed briefs",
+  "type": "module",
+  "bin": {
+    "callsheet": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/cli.ts",
+    "preview": "tsx src/cli.ts --preview",
+    "print": "tsx src/cli.ts",
+    "test": "tsx src/cli.ts --test",
+    "test:connector": "tsx src/cli.ts --test",
+    "data": "tsx src/cli.ts --show-data",
+    "auth:gcal": "tsx src/cli.ts --auth google_calendar",
+    "auth:gmail": "tsx src/cli.ts --auth gmail",
+    "connectors": "tsx src/cli.ts --list-connectors"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@actual-app/api": "^26.3.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@react-pdf/renderer": "^4.3.0",
+    "commander": "^13.1.0",
+    "dotenv": "^16.5.0",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^146.0.0",
+    "js-yaml": "^4.1.0",
+    "react": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
