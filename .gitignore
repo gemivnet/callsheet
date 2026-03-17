@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+secrets/
+output/
+node_modules/
+dist/
+*.tsbuildinfo
+config.yaml
+config.*.yaml
+!config.example.yaml

@@ -1,0 +1,133 @@
+{
+  "title": "Wednesday, June 10, 2026",
+  "subtitle": "82\u00b0F and sunny \u2014 perfect flying weather",
+  "sections": [
+    {
+      "heading": "Executive Brief",
+      "items": [
+        {
+          "label": "Flight lesson 7\u20139 AM at KABC \u2014 winds 5kt, ceiling clear, perfect VFR conditions"
+        },
+        {
+          "label": "Dentist at 2:30 PM downtown \u2014 leave home by 1:45, 40 min drive",
+          "note": "Sarah \u00b7 crown fitting"
+        },
+        {
+          "label": "FedEx arriving today \u2014 signature required, overlaps dentist",
+          "note": "reroute to pickup or ask neighbor"
+        },
+        {
+          "label": "Groceries at 180% of monthly budget, Dining Out at 210% \u2014 review spending",
+          "note": "$847 spent vs $400 budgeted"
+        },
+        {
+          "label": "Australia trip in 42 days \u2014 check passport expiration",
+          "note": "May 7\u201325"
+        },
+        {
+          "label": "VTSAX down 3.2% this week on tariff news \u2014 stay the course",
+          "note": "weekly swing above 3% threshold"
+        },
+        {
+          "label": "Espa\u00f1ol: \"\u00bfQu\u00e9 hacemos hoy?\" \u2014 What are we doing today?"
+        }
+      ]
+    },
+    {
+      "heading": "Today's Schedule",
+      "items": [
+        {
+          "label": "Flight Lesson",
+          "time": "7:00 AM \u2013 9:00 AM",
+          "note": "N123AB, Instructor: Marcus \u00b7 KABC"
+        },
+        {
+          "label": "Standup",
+          "time": "10:00 AM",
+          "note": "Zoom \u00b7 15 min"
+        },
+        {
+          "label": "Dentist \u2014 Crown Fitting",
+          "time": "2:30 PM \u2013 3:30 PM",
+          "note": "Dr. Park, Lakeview Dental \u00b7 downtown"
+        },
+        {
+          "label": "Spanish Class",
+          "time": "6:00 PM \u2013 9:00 PM",
+          "note": "Sarah \u00b7 Instituto Cervantes"
+        }
+      ]
+    },
+    {
+      "heading": "Tasks",
+      "items": [
+        {
+          "label": "Renew Tello Mobile (4 lines)",
+          "checkbox": true,
+          "highlight": true,
+          "urgent": true,
+          "note": "bill arrived yesterday \u00b7 due today"
+        },
+        {
+          "label": "Replace HVAC filter",
+          "checkbox": true,
+          "highlight": true,
+          "note": "overdue \u00b7 monthly recurring"
+        },
+        {
+          "label": "Review grocery spending with Sarah",
+          "checkbox": true,
+          "note": "180% of budget this month"
+        },
+        {
+          "label": "Book Great Barrier Reef tour",
+          "checkbox": true,
+          "note": "Cairns \u00b7 May 9\u201310 window"
+        },
+        {
+          "label": "Submit expense report",
+          "checkbox": true,
+          "note": "Backlog \u00b7 3 receipts pending"
+        }
+      ]
+    },
+    {
+      "heading": "Email Highlights",
+      "items": [
+        {
+          "label": "Dr. Park's office: Pre-appointment forms",
+          "note": "UNREAD \u00b7 complete before 2:30 PM"
+        },
+        {
+          "label": "Reef Experience Cairns: Booking confirmation",
+          "note": "Sarah \u00b7 pending deposit"
+        },
+        {
+          "label": "FedEx: Delivery scheduled today",
+          "note": "signature required \u00b7 772846195"
+        }
+      ]
+    },
+    {
+      "heading": "Upcoming (Next 7 Days)",
+      "items": [
+        {
+          "label": "Thursday 7\u20139 AM: Flight Lesson with Marcus",
+          "note": "KABC \u00b7 crosswind practice"
+        },
+        {
+          "label": "Friday: In Office day",
+          "note": "team lunch at noon \u00b7 commute 45 min"
+        },
+        {
+          "label": "Saturday: Fuselage kit delivery",
+          "note": "RV-12iS \u00b7 need help unloading \u00b7 confirm with Dave"
+        },
+        {
+          "label": "Sunday: Meal prep + flight review",
+          "note": "checkride in 18 days"
+        }
+      ]
+    }
+  ]
+}

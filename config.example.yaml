@@ -1,0 +1,104 @@
+# callsheet config
+# Copy to config.yaml and customize for your household.
+
+# Claude model. Sonnet = fast + cheap (~$0.02/day). Opus = deeper insights (~$0.15/day).
+model: claude-sonnet-4-20250514
+
+# CUPS printer name. Run `lpstat -p -d` to find yours. Leave empty for --preview only.
+printer: ""
+
+# Where to save generated HTML/PDF files
+output_dir: output
+
+# Directory for Google OAuth credentials
+credentials_dir: secrets
+
+# ---------------------------------------------------------------------------
+# Connectors
+# ---------------------------------------------------------------------------
+connectors:
+
+  google_calendar:
+    enabled: true
+    credentials_dir: secrets
+    # credentials_file: credentials.json   # default, or use per-person files
+    calendar_ids:
+      - primary
+      # - "other_calendar_id@group.calendar.google.com"
+      # - "en.usa#holiday@group.v1.calendar.google.com"   # US holidays
+    lookahead_days: 7
+
+  todoist:
+    enabled: true
+    accounts:
+      - name: Person 1
+        token_env: TODOIST_TOKEN_1
+      # - name: Person 2
+      #   token_env: TODOIST_TOKEN_2
+
+  gmail:
+    enabled: false
+    credentials_dir: secrets
+    query: "newer_than:2d -category:promotions -category:social"
+    max_messages: 25
+
+  weather:
+    enabled: true
+    location: "Your City, ST"
+    lat: 0.0
+    lon: 0.0
+
+  aviation_weather:
+    enabled: false
+    stations: []
+
+  home_assistant:
+    enabled: false
+    url: http://homeassistant.local:8123
+    token_env: HA_TOKEN
+    entities: []
+
+  actual_budget:
+    enabled: false
+    server_url: https://budget.example.com/budget
+    password_env: ACTUAL_BUDGET_PASSWORD
+    sync_id: "your-sync-id-here"
+    # budget_password_env: ACTUAL_BUDGET_E2E_PASSWORD  # only if using end-to-end encryption
+    lookback_days: 7
+
+  market:
+    enabled: false
+    symbols:
+      - VTSAX
+
+# ---------------------------------------------------------------------------
+# Household context
+# ---------------------------------------------------------------------------
+# Free-form info injected into Claude's prompt. The more specific, the better.
+# Include dates here — Claude will calculate countdowns automatically.
+context:
+  people: "Your names here"
+  # Add anything that helps Claude make better observations:
+  # health: "Partner has ADHD — keep brief scannable, flag inbox buildup"
+  # work: "Software engineer, hybrid schedule"
+  # hobbies: "Learning piano, training for a marathon (race: Oct 12, 2026)"
+  # travel: "Family trip to Japan, June 1-14, 2026. Flag packing under 7 days."
+  # recurring_bills: "Tello Mobile bills monthly, need manual renewal next day"
+  # key_deadlines: "Thesis due April 30. Bar exam July 2026."
+
+# ---------------------------------------------------------------------------
+# Extras — fun recurring items added to the end of the Executive Brief
+# ---------------------------------------------------------------------------
+# Each extra gets its own instruction block. Claude adds these as the last
+# item(s) in the Executive Brief section. Great for language learning,
+# daily quotes, trivia, fun facts, etc.
+#
+# extras:
+#   - name: "Spanish Word of the Day"
+#     instruction: >
+#       Include a Spanish word or phrase as the last Executive Brief item.
+#       Target A1-A2 level, practical and conversational. Format:
+#       label: "Español: \"¿Cómo estás?\" — How are you?"
+#   - name: "Fun Fact"
+#     instruction: >
+#       Include a short, interesting fact related to today's date or events.
