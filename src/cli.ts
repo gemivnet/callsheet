@@ -51,39 +51,27 @@ async function main() {
   // --- Auth mode ---
   if (opts.auth) {
     const credsDir = config.credentials_dir ?? "secrets";
-    if (opts.auth === "google_calendar" || opts.auth.startsWith("google_calendar:")) {
-      const { auth } = await import("./connectors/google-calendar.js");
-      const accountName = opts.auth.includes(":")
-        ? opts.auth.split(":")[1]
-        : undefined;
-      const gcalConfig = config.connectors?.google_calendar;
-      const accounts = (gcalConfig?.accounts as Array<{ name: string; credentials_file?: string }>) ?? [];
-      const matchedAcct = accountName
-        ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
-        : undefined;
-      const credsFile = matchedAcct?.credentials_file
-        ?? (gcalConfig?.credentials_file as string)
-        ?? undefined;
-      await auth(credsDir, accountName, credsFile);
-    } else if (opts.auth === "gmail" || opts.auth.startsWith("gmail:")) {
-      const { auth } = await import("./connectors/gmail.js");
-      const accountName = opts.auth.includes(":")
-        ? opts.auth.split(":")[1]
-        : undefined;
-      // Look up per-account credentials_file from config
-      const gmailConfig = config.connectors?.gmail;
-      const accounts = (gmailConfig?.accounts as Array<{ name: string; credentials_file?: string }>) ?? [];
-      const matchedAcct = accountName
-        ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
-        : undefined;
-      const credsFile = matchedAcct?.credentials_file;
-      await auth(credsDir, accountName, credsFile);
-    } else {
+    const [connectorName, accountName] = opts.auth.includes(":")
+      ? [opts.auth.split(":")[0], opts.auth.split(":")[1]]
+      : [opts.auth, undefined];
+
+    const registry = getRegistry();
+    const entry = registry.get(connectorName);
+
+    if (!entry?.auth) {
+      const authable = [...registry]
+        .filter(([, e]) => e.auth)
+        .map(([name]) => name);
       console.error(
-        `Unknown auth target: ${opts.auth}. Options: google_calendar, google_calendar:<account_name>, gmail, gmail:<account_name>`,
+        `Unknown or non-auth connector: ${connectorName}\n` +
+        `Connectors with auth: ${authable.join(", ")}\n` +
+        `Use: --auth <connector> or --auth <connector>:<account_name>`,
       );
       process.exit(1);
     }
+
+    const connConfig = config.connectors?.[connectorName] ?? {};
+    await entry.auth(credsDir, connConfig, accountName);
     return;
   }
 

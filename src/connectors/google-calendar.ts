@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { google } from "googleapis";
-import type { Connector, ConnectorConfig, ConnectorResult, Check } from "../types.js";
+import type { Connector, ConnectorConfig, ConnectorResult, Check, ConnectorAuth } from "../types.js";
 import { PASS, FAIL, WARN, INFO } from "../test-icons.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"];
@@ -317,3 +317,14 @@ export function validate(config: ConnectorConfig): Check[] {
 
   return checks;
 }
+
+export const authFromConfig: ConnectorAuth = async (credsDir, config, accountName) => {
+  const accounts = (config.accounts as CalendarAccount[] | undefined) ?? [];
+  const matchedAcct = accountName
+    ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
+    : undefined;
+  const credsFile = matchedAcct?.credentials_file
+    ?? (config.credentials_file as string)
+    ?? undefined;
+  await auth(credsDir, accountName, credsFile);
+};
