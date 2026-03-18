@@ -102,6 +102,18 @@ async function fetchAccount(
   const oauth2 = getCredentials(credsDir, tokenFile, credsFile);
   const gmail = google.gmail({ version: "v1", auth: oauth2 });
 
+  // Build a label ID → name map so we can return human-readable names
+  const labelsRes = await gmail.users.labels.list({ userId: "me" });
+  const allLabels = labelsRes.data.labels ?? [];
+  const labelMap = new Map<string, string>();
+  const userLabels: string[] = [];
+  for (const l of allLabels) {
+    if (l.id && l.name) {
+      labelMap.set(l.id, l.name);
+      if (l.type === "user") userLabels.push(l.name);
+    }
+  }
+
   const listResult = await gmail.users.messages.list({
     userId: "me",
     q: query,
@@ -124,25 +136,35 @@ async function fetchAccount(
       headers[h.name!.toLowerCase()] = h.value!;
     }
 
+    // Resolve label IDs to readable names, keep only user + UNREAD/IMPORTANT
+    const rawLabels = msg.data.labelIds ?? [];
+    const readableLabels = rawLabels
+      .map((id) => labelMap.get(id) ?? id)
+      .filter(
+        (name) =>
+          name === "UNREAD" ||
+          name === "IMPORTANT" ||
+          !name.startsWith("CATEGORY_") && !["INBOX", "SENT", "CHAT", "DRAFT", "SPAM", "TRASH", "STARRED", "YELLOW_STAR"].includes(name),
+      );
+
     emails.push({
       from: headers.from ?? "",
       subject: headers.subject ?? "",
       date: headers.date ?? "",
       snippet: msg.data.snippet ?? "",
-      labels: msg.data.labelIds ?? [],
+      labels: readableLabels,
     });
   }
 
-  const unreadResult = await gmail.users.messages.list({
-    userId: "me",
-    q: "is:unread -category:promotions -category:social",
-    maxResults: 1,
-  });
-  const unreadTotal = unreadResult.data.resultSizeEstimate ?? 0;
+  // Get inbox unread count — must include in:inbox, otherwise Gmail counts
+  // unread across all labels (archived, labeled, etc.)
+  const inboxLabel = await gmail.users.labels.get({ userId: "me", id: "INBOX" });
+  const unreadTotal = inboxLabel.data.messagesUnread ?? 0;
 
   return {
     person: label,
-    unreadCount: unreadTotal,
+    inboxUnread: unreadTotal,
+    userLabels,
     emails,
   };
 }
@@ -189,15 +211,16 @@ export function create(config: ConnectorConfig): Connector {
         0,
       );
       const totalUnread = results.reduce(
-        (sum, r) => sum + (r.unreadCount as number),
+        (sum, r) => sum + (r.inboxUnread as number),
         0,
       );
 
       return {
         source: "gmail",
         description:
-          `Gmail: ${results.length} account(s), ${totalEmails} recent emails (query: '${query}'), ${totalUnread} total unread. ` +
-          "Each account has a person label, unread count, and email list. " +
+          `Gmail: ${results.length} account(s), ${totalEmails} recent emails (query: '${query}'), ${totalUnread} total inbox unread. ` +
+          "Each account has: person name, inboxUnread count, userLabels (their custom label names), and email list. " +
+          "Each email has human-readable labels — use these to understand context (e.g. 'KLM Issue', 'Medical', 'Travel Confirmations'). " +
           "Look for: billing/payment notifications (flag if action needed next day), " +
           "trial/subscription signups (warn about upcoming charges), " +
           "shipping confirmations (extract delivery dates), " +
