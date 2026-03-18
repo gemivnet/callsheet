@@ -51,10 +51,20 @@ async function main() {
   // --- Auth mode ---
   if (opts.auth) {
     const credsDir = config.credentials_dir ?? "secrets";
-    if (opts.auth === "google_calendar") {
+    if (opts.auth === "google_calendar" || opts.auth.startsWith("google_calendar:")) {
       const { auth } = await import("./connectors/google-calendar.js");
-      const credsFile = (config.connectors?.google_calendar?.credentials_file as string) ?? undefined;
-      await auth(credsDir, credsFile);
+      const accountName = opts.auth.includes(":")
+        ? opts.auth.split(":")[1]
+        : undefined;
+      const gcalConfig = config.connectors?.google_calendar;
+      const accounts = (gcalConfig?.accounts as Array<{ name: string; credentials_file?: string }>) ?? [];
+      const matchedAcct = accountName
+        ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
+        : undefined;
+      const credsFile = matchedAcct?.credentials_file
+        ?? (gcalConfig?.credentials_file as string)
+        ?? undefined;
+      await auth(credsDir, accountName, credsFile);
     } else if (opts.auth === "gmail" || opts.auth.startsWith("gmail:")) {
       const { auth } = await import("./connectors/gmail.js");
       const accountName = opts.auth.includes(":")
@@ -70,7 +80,7 @@ async function main() {
       await auth(credsDir, accountName, credsFile);
     } else {
       console.error(
-        `Unknown auth target: ${opts.auth}. Options: google_calendar, gmail, gmail:<account_name>`,
+        `Unknown auth target: ${opts.auth}. Options: google_calendar, google_calendar:<account_name>, gmail, gmail:<account_name>`,
       );
       process.exit(1);
     }

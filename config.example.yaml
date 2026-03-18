@@ -21,12 +21,23 @@ connectors:
   google_calendar:
     enabled: true
     credentials_dir: secrets
-    # credentials_file: credentials.json   # default, or use per-person files
-    calendar_ids:
-      - primary
-      # - "other_calendar_id@group.calendar.google.com"
-      # - "en.usa#holiday@group.v1.calendar.google.com"   # US holidays
     lookahead_days: 7
+    # Multi-account: each person gets their own OAuth token + calendar list
+    accounts:
+      - name: Person 1
+        credentials_file: credentials.json
+        calendar_ids:
+          - primary
+          # - "other_calendar_id@group.calendar.google.com"
+          # - "en.usa#holiday@group.v.calendar.google.com"   # US holidays
+      # - name: Person 2
+      #   credentials_file: credentials_person2.json
+      #   calendar_ids:
+      #     - primary
+    # Legacy single-account mode (no accounts block):
+    # credentials_file: credentials.json
+    # calendar_ids:
+    #   - primary
 
   todoist:
     enabled: true
