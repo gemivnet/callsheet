@@ -19,6 +19,13 @@ export type Check = [icon: string, msg: string, detail: string];
 /** Optional per-connector config validator for --test mode. */
 export type ConnectorValidator = (config: ConnectorConfig) => Check[];
 
+/** Optional per-connector auth handler for --auth mode. */
+export type ConnectorAuth = (
+  credsDir: string,
+  config: ConnectorConfig,
+  accountName?: string,
+) => Promise<void>;
+
 export interface ConnectorConfig {
   enabled?: boolean;
   [key: string]: unknown;
