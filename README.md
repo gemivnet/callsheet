@@ -50,7 +50,28 @@ Sections adapt to the day. Quiet Tuesday? Half-page brief. Packed Thursday befor
 
 > **First time?** The [Setup Guide](docs/SETUP_GUIDE.md) is a detailed walkthrough with connector-by-connector instructions, output analysis tips, cost breakdowns, and troubleshooting.
 
-### 1. Clone and install
+### Option A: Interactive setup script
+
+An interactive script walks you through everything — dependencies, API keys, connectors, printer, and scheduling.
+
+> **Important:** Always review shell scripts before running them. We are not responsible for any issues caused by running this script. Read through [`setup.sh`](setup.sh) first to understand what it will do on your system.
+
+```bash
+git clone https://github.com/gemivnet/callsheet.git
+cd callsheet
+
+# Review the script first!
+less setup.sh
+
+# Then run it
+bash setup.sh
+```
+
+Flags: `--headless` (non-interactive), `--skip-deps` (skip system packages), `--skip-print` (skip printer setup). See `bash setup.sh --help`.
+
+### Option B: Manual setup
+
+#### 1. Clone and install
 
 ```bash
 git clone https://github.com/gemivnet/callsheet.git
@@ -60,7 +81,7 @@ npm install
 
 No system dependencies needed — PDF rendering uses `@react-pdf/renderer` (pure JS, no Chromium, no WeasyPrint).
 
-### 2. Configure
+#### 2. Configure
 
 ```bash
 cp config.example.yaml config.yaml
@@ -69,7 +90,7 @@ cp .env.example .env
 
 Edit `.env` with your API keys. Edit `config.yaml` to enable connectors and add household context.
 
-### 3. Set up Google APIs (if using Calendar or Gmail)
+#### 3. Set up Google APIs (if using Calendar or Gmail)
 
 1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
 2. Enable **Google Calendar API** (and **Gmail API** if using email)
@@ -81,7 +102,7 @@ npm run auth:gcal
 npm run auth:gmail
 ```
 
-### 4. Test your connectors
+#### 4. Test your connectors
 
 ```bash
 # Test all enabled connectors
@@ -96,7 +117,7 @@ npm run data
 
 The test tool shows you exactly what data each connector returns, how many items, estimated token cost, and a preview of the data structure — without making a Claude API call.
 
-### 5. Generate a brief
+#### 5. Generate a brief
 
 ```bash
 # Preview (saves PDF, doesn't print)
@@ -113,7 +134,7 @@ npm run build
 node dist/cli.js --preview
 ```
 
-### 6. Schedule with cron
+#### 6. Schedule with cron
 
 ```bash
 crontab -e

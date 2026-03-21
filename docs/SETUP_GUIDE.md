@@ -4,13 +4,44 @@ A step-by-step walkthrough for getting Callsheet running from scratch. Assumes y
 
 ---
 
-## Prerequisites
+## Interactive setup (recommended)
+
+If you'd prefer a guided experience, there's an interactive setup script that walks you through everything below — dependencies, API keys, connector configuration, OAuth, printer discovery, and scheduling — in a single command.
+
+> **Review before running.** As with any script you download from the internet, you should read through it before executing it. We provide this script as a convenience and are not liable for any issues it may cause on your system. It installs system packages (Node.js, optionally CUPS), writes to your `.env` and `config.yaml` files, and can set up cron jobs.
+
+```bash
+# Read the script first
+less setup.sh
+
+# Run it
+bash setup.sh
+```
+
+**Flags:**
+
+| Flag | Effect |
+|------|--------|
+| `--headless` | Non-interactive mode — uses defaults, skips all prompts |
+| `--skip-deps` | Skip system dependency installation (Node.js, CUPS) |
+| `--skip-print` | Skip printer setup entirely |
+| `--help` | Show usage |
+
+The script logs everything to `setup.log` in the project root. If something goes wrong, check that file for details.
+
+If you'd rather do things manually, or want to understand each step, continue with the guide below.
+
+---
+
+## Manual setup
+
+### Prerequisites
 
 - **Node.js 20+** — check with `node --version`. Install via [nvm](https://github.com/nvm-sh/nvm) or [nodejs.org](https://nodejs.org).
 - **A printer** (optional) — any CUPS-compatible printer works. You can use `--preview` mode without one.
 - **An Anthropic API key** — sign up at [console.anthropic.com](https://console.anthropic.com) and add credits ($5 is enough for months of daily briefs).
 
-## Step 1: Clone and install
+### Step 1: Clone and install
 
 ```bash
 git clone https://github.com/gemivnet/callsheet.git
@@ -18,7 +49,7 @@ cd callsheet
 npm install
 ```
 
-## Step 2: Create your config files
+### Step 2: Create your config files
 
 ```bash
 cp config.example.yaml config.yaml
@@ -32,7 +63,7 @@ You now have two files to edit:
 | `.env` | Secrets: API keys, tokens. Never committed to git. |
 | `config.yaml` | Everything else: which connectors are on, household context, printer name. |
 
-## Step 3: Add your Anthropic API key
+### Step 3: Add your Anthropic API key
 
 Open `.env` and paste your key:
 
@@ -56,11 +87,11 @@ model: claude-opus-4-6
 
 Start with Sonnet. Switch to Opus after you've dialed in your connectors and context — the quality difference is noticeable in the Executive Brief section, where Claude connects dots across data sources.
 
-## Step 4: Enable connectors
+### Step 4: Enable connectors
 
 Start simple. You don't need all seven connectors on day one. Pick 1-2 to start:
 
-### Suggested starting order
+#### Suggested starting order
 
 1. **Weather** — zero auth, instant gratification
 2. **Todoist** — quick API token, shows tasks immediately
@@ -334,7 +365,7 @@ connectors:
 
 Use [ICAO airport codes](https://www.world-airport-codes.com/). Pick your home airport and training airports.
 
-## Step 5: Add household context
+### Step 5: Add household context
 
 The `context` block in `config.yaml` is what makes Callsheet genuinely useful instead of just a formatted data dump. This gets injected into Claude's prompt so it can make connections.
 
@@ -373,7 +404,7 @@ context:
 - Passwords or tokens (use `.env`)
 - Excessively long text (this counts toward input tokens)
 
-## Step 6: Test everything
+### Step 6: Test everything
 
 Run the full diagnostic:
 
@@ -410,7 +441,7 @@ npx tsx src/cli.ts --show-data
 npx tsx src/cli.ts --list-connectors
 ```
 
-## Step 7: Generate your first brief
+### Step 7: Generate your first brief
 
 ```bash
 npx tsx src/cli.ts --preview
@@ -434,7 +465,7 @@ If something's off, the three tuning points are:
 | How Claude interprets data | Connector `description` field in source code |
 | What Claude generates | `src/prompts/system.md` |
 
-## Step 8: Set up your printer
+### Step 8: Set up your printer
 
 Find your CUPS printer name:
 
@@ -454,7 +485,7 @@ Test a full print run:
 npx tsx src/cli.ts
 ```
 
-## Step 9: Schedule with cron
+### Step 9: Schedule with cron
 
 Build for production:
 
@@ -483,7 +514,7 @@ This runs at 6:30 AM every day. Adjust the time to whenever you want your brief 
 - Make sure your `.env` file is in the project root (it's loaded relative to the working directory).
 - If your printer is a network printer, make sure the machine running cron can reach it.
 
-## Troubleshooting
+### Troubleshooting
 
 ### "Config not found"
 You need a `config.yaml` in the project root. Copy from the example: `cp config.example.yaml config.yaml`
@@ -518,7 +549,7 @@ Claude is generating too much content for one page. Options:
 ### Brief is too sparse
 Add more household context in `config.yaml`. The more Claude knows about your life, the better it connects dots. Also consider switching from Sonnet to Opus for richer analysis.
 
-## Understanding costs
+### Understanding costs
 
 Every brief makes one Claude API call. Cost depends on input tokens (your data) + output tokens (the brief).
 
