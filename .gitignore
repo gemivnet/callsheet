@@ -9,3 +9,4 @@ dist/
 config.yaml
 config.*.yaml
 !config.example.yaml
+feedback.md

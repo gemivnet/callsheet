@@ -191,6 +191,154 @@ export async function saveMemory(
 }
 
 // ---------------------------------------------------------------------------
+// Feedback loop — user notes + self-critique history that improve future briefs
+// ---------------------------------------------------------------------------
+
+const FEEDBACK_DIR = "feedback";
+const MAX_CRITIQUE_DAYS = 7;
+
+interface CritiqueEntry {
+  date: string;
+  issues: string[];
+}
+
+function loadFeedbackNotes(outputDir: string): string {
+  // User-written feedback file — lives in project root, not output dir
+  const feedbackPath = join(process.cwd(), "feedback.md");
+  if (!existsSync(feedbackPath)) return "";
+
+  const raw = readFileSync(feedbackPath, "utf-8").trim();
+  if (!raw) return "";
+
+  return (
+    "\n\n## User feedback\n\n" +
+    "The user has left these notes about how to improve the brief. Follow them:\n\n" +
+    raw +
+    "\n"
+  );
+}
+
+function loadRecentCritiques(outputDir: string): CritiqueEntry[] {
+  const critiqueDir = join(outputDir, FEEDBACK_DIR);
+  if (!existsSync(critiqueDir)) return [];
+
+  const files = readdirSync(critiqueDir)
+    .filter((f) => f.startsWith("critique_") && f.endsWith(".json"))
+    .sort()
+    .slice(-MAX_CRITIQUE_DAYS);
+
+  return files.map((f) => {
+    try {
+      return JSON.parse(
+        readFileSync(join(critiqueDir, f), "utf-8"),
+      ) as CritiqueEntry;
+    } catch {
+      return { date: f, issues: [] };
+    }
+  });
+}
+
+function buildFeedbackContext(
+  outputDir: string,
+): string {
+  let ctx = "";
+
+  // User feedback notes
+  ctx += loadFeedbackNotes(outputDir);
+
+  // Recent self-critique history
+  const critiques = loadRecentCritiques(outputDir);
+  const recentIssues = critiques
+    .flatMap((c) => c.issues)
+    .filter((issue, i, arr) => arr.indexOf(issue) === i); // deduplicate
+
+  if (recentIssues.length) {
+    ctx += "\n\n## Quality issues from recent briefs\n\n";
+    ctx +=
+      "Your previous briefs had these problems. Actively avoid repeating them:\n\n";
+    for (const issue of recentIssues.slice(-10)) {
+      ctx += `- ${issue}\n`;
+    }
+  }
+
+  return ctx;
+}
+
+async function critiqueBrief(
+  client: Anthropic,
+  model: string,
+  brief: Brief,
+  dataPayload: string,
+  outputDir: string,
+): Promise<void> {
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001", // Use Haiku for cheap self-review
+      max_tokens: 512,
+      system:
+        "You are a quality reviewer for a daily household brief. " +
+        "Analyze the brief for structural issues. Return a JSON array of 0-5 short strings describing problems found. " +
+        "Check for:\n" +
+        "- Duplication: same topic appearing in multiple sections (e.g. exec brief AND tasks)\n" +
+        "- Poor grouping: tasks that jump between unrelated topics instead of clustering by theme\n" +
+        "- Missing data: tasks, calendar events, or emails in the raw data that should have been surfaced but weren't\n" +
+        "- Stale items: items from memory that don't appear in today's live data\n" +
+        "- Verbosity: items that are too long or wordy for a printed brief\n" +
+        "If the brief is good, return an empty array []. Return ONLY the JSON array.",
+      messages: [
+        {
+          role: "user",
+          content:
+            `Today's brief:\n${JSON.stringify(brief, null, 2)}\n\n` +
+            `Raw data (key sources):\n${dataPayload.slice(0, 6000)}`,
+        },
+      ],
+    });
+
+    let text = (response.content[0] as { type: "text"; text: string }).text.trim();
+    const fenceMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n\s*```/);
+    if (fenceMatch) text = fenceMatch[1].trim();
+
+    const issues = JSON.parse(text) as string[];
+
+    if (issues.length) {
+      const critiqueDir = join(outputDir, FEEDBACK_DIR);
+      mkdirSync(critiqueDir, { recursive: true });
+      const today = new Date().toISOString().slice(0, 10);
+      const entry: CritiqueEntry = { date: today, issues };
+      writeFileSync(
+        join(critiqueDir, `critique_${today}.json`),
+        JSON.stringify(entry, null, 2),
+      );
+      console.log(
+        `  Self-critique: ${issues.length} issue(s) logged for future improvement.`,
+      );
+    } else {
+      console.log("  Self-critique: no issues found.");
+    }
+
+    // Prune old critiques
+    const critiqueDir = join(outputDir, FEEDBACK_DIR);
+    if (existsSync(critiqueDir)) {
+      const files = readdirSync(critiqueDir)
+        .filter((f) => f.startsWith("critique_") && f.endsWith(".json"))
+        .sort();
+      while (files.length > MAX_CRITIQUE_DAYS) {
+        const old = files.shift()!;
+        try {
+          const { unlinkSync } = await import("node:fs");
+          unlinkSync(join(critiqueDir, old));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`  Warning: Self-critique failed: ${e}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Yesterday's brief — for diff context
 // ---------------------------------------------------------------------------
 
@@ -287,6 +435,9 @@ function loadPrompt(config: CallsheetConfig): string {
   const memories = loadRecentMemories(outputDir);
   prompt += buildMemoryContext(memories);
 
+  // Load feedback loop context (user notes + self-critique history)
+  prompt += buildFeedbackContext(outputDir);
+
   return prompt;
 }
 
@@ -348,6 +499,9 @@ export async function generateBrief(
 
   // Save memory for future briefs
   await saveMemory(client, model, brief, dataPayload, outputDir);
+
+  // Self-critique: review the brief for quality issues (uses Haiku, ~$0.001)
+  await critiqueBrief(client, model, brief, dataPayload, outputDir);
 
   return brief;
 }
