@@ -45,12 +45,13 @@ Return ONLY valid JSON matching this schema. No markdown, no explanations, no co
 
 - **Two pages max** (front and back of a letter-size sheet). Aim for one page when the day is light; use two when there's substance. Never pad to fill space.
 - **Quiet days are okay.** If genuinely nothing notable is happening — no urgent emails, no conflicts, no budget alerts, light calendar — return a short brief. A half-page with 3 executive brief items and a simple schedule is better than manufacturing importance to fill space. Don't invent urgency.
-- **STRICT: No duplication across sections.** Each piece of information appears in exactly ONE section. Before adding an item, check if it's already covered elsewhere. If "KLM LOA needs resubmission" is a task, do NOT also put it in the Executive Brief and Email Highlights — that's three mentions of the same thing. Pick the single best home for it:
-  - **Executive Brief** → only if it connects multiple sources or adds cross-referenced insight
-  - **Tasks** → if an action is needed today
+- **STRICT: No duplication across sections.** Each piece of information appears in exactly ONE section. Before finalizing the brief, do a dedup pass: scan every item and check if the same topic appears in multiple sections. If "KLM LOA needs resubmission" is a task, do NOT also put it in the Executive Brief and Email Highlights — that's three mentions of the same thing. Pick the single best home for it:
+  - **Executive Brief** → only if it connects multiple sources or adds cross-referenced insight that doesn't fit elsewhere
+  - **Tasks** → if an action is needed (this is usually the right home for actionable items)
   - **Email Highlights** → if it's informational only, no action required
   - **Schedule** → if it's a calendar event
-  - When in doubt, put it in Tasks (actionable) or Email (informational) and leave it out of the Executive Brief. The Executive Brief is for *synthesis*, not repetition.
+  - When in doubt, put it in Tasks (actionable) or Email (informational) and **remove it from the Executive Brief**. The Executive Brief is for *synthesis*, not repetition. A budget alert that says "cancel X subscription" does NOT also need a task saying "cancel X subscription" — pick one.
+  - **Common violation:** Putting an item in the Executive Brief AND in Tasks. If you write an exec brief item about something actionable, check if you also added a task for it. If so, delete whichever is less useful (usually the exec brief item).
 - Use `checkbox: true` for ALL actionable tasks. These render as pen-markable checkboxes.
 - Truncate long text. No full URLs — write descriptive text instead.
 - Fewer items done well beats many items crammed in.
@@ -93,6 +94,11 @@ All calendar events in chronological order. All-day events first (no time field)
 ### 3. Tasks
 A single combined section. Merge tasks from all people and all sources (Todoist today, overdue, inbox, and notable project/backlog items). **Deduplicate** — if the same task appears for both people, show it once.
 
+**Grouping:** Don't just list tasks randomly — group them so related items are adjacent. Good grouping strategies:
+- By theme/context: urgent actions first, then travel prep, then household, then personal, etc.
+- Within each group, put the most time-sensitive items first.
+- The reader should be able to scan a cluster and think "these are all about the same thing" rather than context-switching between unrelated items every line.
+
 **Prioritization:** Don't just list tasks in Todoist order. Re-rank them based on all available context:
 - Tasks related to today's calendar events or time-sensitive emails come first
 - Tasks connected to recent purchases or spending (e.g., "set up new monitor" after a Best Buy purchase)
@@ -110,6 +116,7 @@ Set `highlight: true` for: overdue items, high-priority (p1/priority 4), and ite
 **What to include beyond today/overdue:**
 - Inbox items that are actionable or have been sitting too long
 - Project/backlog items that relate to today's schedule, upcoming deadlines, or household context (e.g., a "research builders risk insurance" task when there's a related email)
+- **Travel backlog items when a trip is approaching** — if the household context mentions a trip within 60 days, actively pull in travel-project tasks (itinerary, bookings, confirmations). These are time-sensitive even without a due date.
 - Tasks that connect to recent transactions or purchases (e.g., return window closing, setup needed)
 - Don't dump the entire backlog. Cherry-pick 3-5 items max that are contextually relevant today.
 
