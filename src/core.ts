@@ -264,13 +264,13 @@ function buildFeedbackContext(
   return ctx;
 }
 
-async function critiqueBrief(
+export async function critiqueBrief(
   client: Anthropic,
   model: string,
   brief: Brief,
   dataPayload: string,
   outputDir: string,
-): Promise<void> {
+): Promise<string[]> {
   try {
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001", // Use Haiku for cheap self-review
@@ -310,31 +310,12 @@ async function critiqueBrief(
         join(critiqueDir, `critique_${today}.json`),
         JSON.stringify(entry, null, 2),
       );
-      console.log(
-        `  Self-critique: ${issues.length} issue(s) logged for future improvement.`,
-      );
-    } else {
-      console.log("  Self-critique: no issues found.");
     }
 
-    // Prune old critiques
-    const critiqueDir = join(outputDir, FEEDBACK_DIR);
-    if (existsSync(critiqueDir)) {
-      const files = readdirSync(critiqueDir)
-        .filter((f) => f.startsWith("critique_") && f.endsWith(".json"))
-        .sort();
-      while (files.length > MAX_CRITIQUE_DAYS) {
-        const old = files.shift()!;
-        try {
-          const { unlinkSync } = await import("node:fs");
-          unlinkSync(join(critiqueDir, old));
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+    return issues;
   } catch (e) {
     console.log(`  Warning: Self-critique failed: ${e}`);
+    return [];
   }
 }
 
@@ -501,7 +482,12 @@ export async function generateBrief(
   await saveMemory(client, model, brief, dataPayload, outputDir);
 
   // Self-critique: review the brief for quality issues (uses Haiku, ~$0.001)
-  await critiqueBrief(client, model, brief, dataPayload, outputDir);
+  const issues = await critiqueBrief(client, model, brief, dataPayload, outputDir);
+  if (issues.length) {
+    console.log(`  Self-critique: ${issues.length} issue(s) logged for future improvement.`);
+  } else {
+    console.log("  Self-critique: no issues found.");
+  }
 
   return brief;
 }

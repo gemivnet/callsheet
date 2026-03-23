@@ -6,6 +6,7 @@ import {
   fetchAll,
   buildDataPayload,
   generateBrief,
+  critiqueBrief,
   saveBrief,
   printPdf,
 } from "./core.js";
@@ -20,7 +21,8 @@ program
   .option("--auth <connector>", "Run OAuth setup for a connector")
   .option("--show-data", "Dump raw data and exit")
   .option("--list-connectors", "List available connectors")
-  .option("--test [connectors...]", "Test connectors");
+  .option("--test [connectors...]", "Test connectors")
+  .option("--review [date]", "Review a brief for quality issues (default: today)");
 
 program.parse();
 
@@ -31,6 +33,7 @@ const opts = program.opts<{
   showData?: boolean;
   listConnectors?: boolean;
   test?: string[] | true;
+  review?: string | true;
 }>();
 
 async function main() {
@@ -83,6 +86,60 @@ async function main() {
         ? opts.test
         : undefined;
     await runTests(config, only);
+    return;
+  }
+
+  // --- Review mode ---
+  if (opts.review !== undefined) {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+    if (!apiKey) {
+      console.error("ERROR: ANTHROPIC_API_KEY not set.");
+      process.exit(1);
+    }
+
+    const outputDir = config.output_dir ?? "output";
+    const dateStr =
+      typeof opts.review === "string"
+        ? opts.review
+        : new Date().toISOString().slice(0, 10);
+
+    const briefPath = join(outputDir, `callsheet_${dateStr}.json`);
+    if (!existsSync(briefPath)) {
+      console.error(`No brief found for ${dateStr} at ${briefPath}`);
+      console.error(
+        "Usage: --review         (review today's brief)\n" +
+        "       --review 2026-03-20  (review a specific date)",
+      );
+      process.exit(1);
+    }
+
+    const brief = JSON.parse(readFileSync(briefPath, "utf-8"));
+    console.log(`Reviewing brief for ${dateStr}...`);
+
+    // Fetch fresh data so the critique can compare against it
+    console.log("Fetching current data for comparison...");
+    const results = await fetchAll(config);
+    const dataPayload = buildDataPayload(results);
+
+    const client = new Anthropic({ apiKey });
+    const model = config.model ?? "claude-sonnet-4-20250514";
+    const issues = await critiqueBrief(client, model, brief, dataPayload, outputDir);
+
+    if (issues.length === 0) {
+      console.log("\n\u2705 No issues found — brief looks good.");
+    } else {
+      console.log(`\n\u26a0\ufe0f  ${issues.length} issue(s) found:\n`);
+      for (const issue of issues) {
+        console.log(`  \u2022 ${issue}`);
+      }
+      console.log(
+        "\nThese have been saved and will be fed into tomorrow's prompt.",
+      );
+    }
     return;
   }
 

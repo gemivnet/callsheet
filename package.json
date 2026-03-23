@@ -16,6 +16,7 @@
     "data": "tsx src/cli.ts --show-data",
     "auth:gcal": "tsx src/cli.ts --auth google_calendar",
     "auth:gmail": "tsx src/cli.ts --auth gmail",
+    "review": "tsx src/cli.ts --review",
     "connectors": "tsx src/cli.ts --list-connectors"
   },
   "license": "MIT",
