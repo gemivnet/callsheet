@@ -93,6 +93,10 @@ function buildMemoryContext(memories: DailyMemory[]): string {
   ctx += "- Track ongoing situations (packages in transit, bills coming due, project progress)\n";
   ctx += "- Avoid repeating the same insight if nothing has changed\n";
   ctx += "- Notice trends or follow up on previous observations\n\n";
+  ctx += "**IMPORTANT:** If a memorized item (e.g. a task, reminder, or action item) no longer appears in today's fresh connector data, ";
+  ctx += "treat it as RESOLVED and do NOT include it in the brief. ";
+  ctx += "Memories are hints, not truth — today's live data always takes precedence. ";
+  ctx += "Only surface a memorized item if it is corroborated by current data.\n\n";
 
   for (const mem of memories) {
     ctx += `### ${mem.date}\n`;
@@ -121,6 +125,10 @@ async function generateMemoryInsights(
         "ongoing situations (deliveries, upcoming deadlines, bills due soon), " +
         "notable patterns (spending spikes, inbox growth), " +
         "things to follow up on tomorrow. " +
+        "IMPORTANT: Only memorize items that are backed by TODAY's live connector data. " +
+        "Do NOT re-memorize tasks, reminders, or action items from previous memory notes " +
+        "unless they still appear in today's raw data. If a task was in yesterday's memory " +
+        "but is absent from today's task list, it was completed — do not carry it forward. " +
         "Skip routine/static info. Be concise. Return ONLY the JSON array.",
       messages: [
         {
