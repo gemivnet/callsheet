@@ -77,13 +77,14 @@ export async function auth(credsDir: string, accountName?: string, credsFile?: s
     server.listen(3000);
   });
 
-  server.close();
+  server.close(() => server.unref());
 
   const { tokens } = await oauth2.getToken(code);
   oauth2.setCredentials(tokens);
   mkdirSync(credsDir, { recursive: true });
   writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
   console.log(`Gmail auth complete. Token saved to ${tokenPath}`);
+  process.exit(0);
 }
 
 interface GmailAccount {
