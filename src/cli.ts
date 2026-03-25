@@ -8,6 +8,7 @@ import {
   generateBrief,
   critiqueBrief,
   saveBrief,
+  saveDataPayload,
   printPdf,
 } from "./core.js";
 import { getRegistry } from "./connectors/index.js";
@@ -161,8 +162,12 @@ async function main() {
     return;
   }
 
-  // --- Generate ---
+  // --- Save raw data ---
   const outputDir = config.output_dir ?? "output";
+  const dataPath = saveDataPayload(dataPayload, outputDir);
+  console.log(`  Data: ${dataPath}`);
+
+  // --- Generate ---
   const model = config.model ?? "claude-sonnet-4-20250514";
 
   console.log(`Generating brief via Claude (${model})...`);

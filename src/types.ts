@@ -44,6 +44,15 @@ export interface CallsheetConfig {
   context?: Record<string, string>;
   connectors?: Record<string, ConnectorConfig>;
   extras?: BriefExtra[];
+  auto_close_tasks?: boolean;
+}
+
+/** A task that Claude recommends closing based on resolution signals. */
+export interface AutoCloseRecommendation {
+  task_id: string;
+  task_content: string;
+  person: string;
+  reason: string;
 }
 
 /** Brief structure that Claude outputs. */

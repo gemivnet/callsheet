@@ -45,13 +45,13 @@ Return ONLY valid JSON matching this schema. No markdown, no explanations, no co
 
 - **Two pages max** (front and back of a letter-size sheet). Aim for one page when the day is light; use two when there's substance. Never pad to fill space.
 - **Quiet days are okay.** If genuinely nothing notable is happening — no urgent emails, no conflicts, no budget alerts, light calendar — return a short brief. A half-page with 3 executive brief items and a simple schedule is better than manufacturing importance to fill space. Don't invent urgency.
-- **STRICT: No duplication across sections.** Each piece of information appears in exactly ONE section. Before finalizing the brief, do a dedup pass: scan every item and check if the same topic appears in multiple sections. If "KLM LOA needs resubmission" is a task, do NOT also put it in the Executive Brief and Email Highlights — that's three mentions of the same thing. Pick the single best home for it:
-  - **Executive Brief** → only if it connects multiple sources or adds cross-referenced insight that doesn't fit elsewhere
-  - **Tasks** → if an action is needed (this is usually the right home for actionable items)
-  - **Email Highlights** → if it's informational only, no action required
+- **STRICT: No duplication across sections.** Each piece of information appears in exactly ONE section. This is the single most important formatting rule — violations make the brief feel bloated and repetitive. Pick the ONE best home for each topic:
+  - **Executive Brief** → only for cross-source synthesis that doesn't fit elsewhere
+  - **Tasks** → if an action is needed (this is usually the right home)
+  - **Email Highlights** → if it's informational only
   - **Schedule** → if it's a calendar event
-  - When in doubt, put it in Tasks (actionable) or Email (informational) and **remove it from the Executive Brief**. The Executive Brief is for *synthesis*, not repetition. A budget alert that says "cancel X subscription" does NOT also need a task saying "cancel X subscription" — pick one.
-  - **Common violation:** Putting an item in the Executive Brief AND in Tasks. If you write an exec brief item about something actionable, check if you also added a task for it. If so, delete whichever is less useful (usually the exec brief item).
+  - When in doubt, put it in Tasks or Email and **leave it out of the Executive Brief**.
+  - **VERIFICATION STEP:** After generating all sections, go through each Executive Brief item and check: "Did I also put this topic in Tasks, Email, or Upcoming?" If yes, DELETE the Executive Brief mention. For example: if you have a task "Address KLM LOA signature mismatch" AND an exec brief item "KLM LOA still unresolved" — delete the exec brief item. The task already covers it. Same for travel countdowns: if there are travel tasks with "43 days out" in the note, you do NOT also need an exec brief item saying "43 days to Australia."
 - Use `checkbox: true` for ALL actionable tasks. These render as pen-markable checkboxes.
 - Truncate long text. No full URLs — write descriptive text instead.
 - Fewer items done well beats many items crammed in.
@@ -78,7 +78,7 @@ Each item should be a concise, punchy insight — not a full sentence. Think bul
 - Deadline pressure and countdowns
 - Inbox health
 - **Budget alerts:** Over-budget or on-pace-to-exceed categories — call out specifically
-- Market moves: only if notable (>2% weekly swing)
+- Market moves: only if notable (>2% weekly swing). **Do NOT repeat the same stock move on consecutive days.** If DASH was flagged yesterday for being down 6%, do not flag it again today unless there's a materially NEW development (e.g. it dropped another 5%, or earnings were released). A stock staying down is not news — the initial flag was sufficient.
 - Home issues: only if flagged abnormal
 
 **Rules:**

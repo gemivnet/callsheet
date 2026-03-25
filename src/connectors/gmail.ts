@@ -102,6 +102,12 @@ async function fetchAccount(
   const oauth2 = getCredentials(credsDir, tokenFile, credsFile);
   const gmail = google.gmail({ version: "v1", auth: oauth2 });
 
+  // Ensure we search everywhere (inbox, trash, archive, etc.) so that
+  // trashed/archived messages are still found.
+  const effectiveQuery = query.includes("in:anywhere")
+    ? query
+    : `in:anywhere ${query}`;
+
   // Build a label ID → name map so we can return human-readable names
   const labelsRes = await gmail.users.labels.list({ userId: "me" });
   const allLabels = labelsRes.data.labels ?? [];
@@ -116,7 +122,7 @@ async function fetchAccount(
 
   const listResult = await gmail.users.messages.list({
     userId: "me",
-    q: query,
+    q: effectiveQuery,
     maxResults: maxMessages,
   });
 
@@ -144,6 +150,7 @@ async function fetchAccount(
         (name) =>
           name === "UNREAD" ||
           name === "IMPORTANT" ||
+          name === "TRASH" ||
           !name.startsWith("CATEGORY_") && !["INBOX", "SENT", "CHAT", "DRAFT", "SPAM", "TRASH", "STARRED", "YELLOW_STAR"].includes(name),
       );
 
@@ -153,6 +160,7 @@ async function fetchAccount(
       date: headers.date ?? "",
       snippet: msg.data.snippet ?? "",
       labels: readableLabels,
+      trashed: rawLabels.includes("TRASH"),
     });
   }
 

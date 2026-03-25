@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
 import yaml from "js-yaml";
-import type { CallsheetConfig, ConnectorResult, Brief } from "./types.js";
+import type { CallsheetConfig, ConnectorResult, Brief, AutoCloseRecommendation } from "./types.js";
 import { loadConnectors } from "./connectors/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -93,10 +93,13 @@ function buildMemoryContext(memories: DailyMemory[]): string {
   ctx += "- Track ongoing situations (packages in transit, bills coming due, project progress)\n";
   ctx += "- Avoid repeating the same insight if nothing has changed\n";
   ctx += "- Notice trends or follow up on previous observations\n\n";
-  ctx += "**IMPORTANT:** If a memorized item (e.g. a task, reminder, or action item) no longer appears in today's fresh connector data, ";
-  ctx += "treat it as RESOLVED and do NOT include it in the brief. ";
-  ctx += "Memories are hints, not truth — today's live data always takes precedence. ";
-  ctx += "Only surface a memorized item if it is corroborated by current data.\n\n";
+  ctx += "**IMPORTANT — Memory is not truth. Today's live data always wins:**\n";
+  ctx += "- If a memorized task no longer appears in today's Todoist data, it was completed — do NOT surface it.\n";
+  ctx += "- If a memorized issue has a NEWER email showing resolution (approval, confirmation, payment received), treat it as RESOLVED.\n";
+  ctx += "- Check the 'recently_completed' list in Todoist data — anything there is DONE.\n";
+  ctx += "- Check trashed/archived emails — if someone trashed a notification, they already handled it.\n";
+  ctx += "- Do NOT let memory override clear resolution signals in today's data.\n";
+  ctx += "- If a memory item has been repeated 3+ days with no change, it's stale — either surface it as a single task or drop it entirely.\n\n";
 
   for (const mem of memories) {
     ctx += `### ${mem.date}\n`;
@@ -380,6 +383,136 @@ function buildDiffContext(prev: { brief: Brief; label: string }): string {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-close: optionally close Todoist tasks when data shows they're resolved
+// ---------------------------------------------------------------------------
+
+async function detectResolvableTasks(
+  client: Anthropic,
+  model: string,
+  dataPayload: string,
+): Promise<AutoCloseRecommendation[]> {
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      system:
+        "You identify Todoist tasks that should be CLOSED because another data source proves they are resolved. " +
+        "Return a JSON array of objects with: task_id, task_content, person, reason. " +
+        "Be EXTREMELY conservative. Only recommend closing a task if there is CLEAR, UNAMBIGUOUS evidence: " +
+        "- An email confirmation that the exact action was completed (e.g. 'subscription cancelled', 'payment received', 'LOA approved') " +
+        "- A transaction showing the bill was paid " +
+        "- A delivery confirmation for something that had a 'track package' task " +
+        "Do NOT close tasks based on: assumptions, partial evidence, or if you're merely unsure whether it's done. " +
+        "When in doubt, do NOT close. Return [] if nothing qualifies. Return ONLY the JSON array.",
+      messages: [
+        {
+          role: "user",
+          content: `Here is today's connector data. Find Todoist tasks that are proven resolved by emails, transactions, or other sources:\n\n${dataPayload.slice(0, 8000)}`,
+        },
+      ],
+    });
+
+    let text = (response.content[0] as { type: "text"; text: string }).text.trim();
+    const fenceMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n\s*```/);
+    if (fenceMatch) text = fenceMatch[1].trim();
+    return JSON.parse(text) as AutoCloseRecommendation[];
+  } catch (e) {
+    console.log(`  Warning: Auto-close detection failed: ${e}`);
+    return [];
+  }
+}
+
+async function closeTodoistTasks(
+  recommendations: AutoCloseRecommendation[],
+  config: CallsheetConfig,
+): Promise<AutoCloseRecommendation[]> {
+  const closed: AutoCloseRecommendation[] = [];
+  const accounts = (config.connectors?.todoist?.accounts ?? []) as Array<{
+    name: string;
+    token_env: string;
+  }>;
+
+  for (const rec of recommendations) {
+    // Find the right token for this person
+    const acct = accounts.find(
+      (a) => a.name.toLowerCase() === rec.person.toLowerCase(),
+    );
+    const token = acct ? process.env[acct.token_env] ?? "" : "";
+    if (!token) {
+      console.log(`  Auto-close: skipping "${rec.task_content}" — no token for ${rec.person}`);
+      continue;
+    }
+
+    try {
+      const resp = await fetch(
+        `https://api.todoist.com/api/v1/tasks/${rec.task_id}/close`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (resp.ok) {
+        closed.push(rec);
+        console.log(`  Auto-closed: "${rec.task_content}" (${rec.person}) — ${rec.reason}`);
+      } else {
+        console.log(`  Auto-close failed (${resp.status}): "${rec.task_content}"`);
+      }
+    } catch (e) {
+      console.log(`  Auto-close error: "${rec.task_content}" — ${e}`);
+    }
+  }
+
+  return closed;
+}
+
+function saveAutoCloseLog(
+  closed: AutoCloseRecommendation[],
+  outputDir: string,
+): void {
+  if (!closed.length) return;
+  const logDir = join(outputDir, "auto_close");
+  mkdirSync(logDir, { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  writeFileSync(
+    join(logDir, `closed_${today}.json`),
+    JSON.stringify({ date: today, closed }, null, 2),
+  );
+}
+
+function loadRecentAutoCloses(outputDir: string): AutoCloseRecommendation[] {
+  const logDir = join(outputDir, "auto_close");
+  if (!existsSync(logDir)) return [];
+
+  // Load yesterday's auto-closes to report in today's brief
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dateStr = yesterday.toISOString().slice(0, 10);
+  const logPath = join(logDir, `closed_${dateStr}.json`);
+
+  try {
+    if (existsSync(logPath)) {
+      const data = JSON.parse(readFileSync(logPath, "utf-8"));
+      return data.closed as AutoCloseRecommendation[];
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+function buildAutoCloseContext(outputDir: string): string {
+  const recent = loadRecentAutoCloses(outputDir);
+  if (!recent.length) return "";
+
+  let ctx = "\n\n## Auto-closed tasks\n\n";
+  ctx += "The following tasks were automatically closed yesterday because data confirmed they were resolved. ";
+  ctx += "**You MUST mention these in the Executive Brief** so the user knows what was auto-closed and can re-open if needed:\n\n";
+  for (const r of recent) {
+    ctx += `- ✅ "${r.task_content}" (${r.person}) — ${r.reason}\n`;
+  }
+  return ctx;
+}
+
+// ---------------------------------------------------------------------------
 
 function loadPrompt(config: CallsheetConfig): string {
   const promptPath = join(__dirname, "prompts", "system.md");
@@ -418,6 +551,9 @@ function loadPrompt(config: CallsheetConfig): string {
 
   // Load feedback loop context (user notes + self-critique history)
   prompt += buildFeedbackContext(outputDir);
+
+  // Load auto-close notifications from yesterday
+  prompt += buildAutoCloseContext(outputDir);
 
   return prompt;
 }
@@ -489,7 +625,31 @@ export async function generateBrief(
     console.log("  Self-critique: no issues found.");
   }
 
+  // Auto-close: optionally close Todoist tasks proven resolved by other data sources
+  if (config.auto_close_tasks) {
+    console.log("  Checking for auto-closable tasks...");
+    const recommendations = await detectResolvableTasks(client, model, dataPayload);
+    if (recommendations.length) {
+      console.log(`  Found ${recommendations.length} task(s) to auto-close:`);
+      const closed = await closeTodoistTasks(recommendations, config);
+      saveAutoCloseLog(closed, outputDir);
+      if (closed.length) {
+        console.log(`  ✓ Auto-closed ${closed.length} task(s). Will be reported in tomorrow's brief.`);
+      }
+    } else {
+      console.log("  No tasks to auto-close.");
+    }
+  }
+
   return brief;
+}
+
+export function saveDataPayload(dataPayload: string, outputDir: string): string {
+  mkdirSync(outputDir, { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  const path = join(outputDir, `data_${today}.json`);
+  writeFileSync(path, dataPayload);
+  return path;
 }
 
 export function saveBrief(brief: Brief, outputDir: string): string {
