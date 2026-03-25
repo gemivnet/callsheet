@@ -100,45 +100,34 @@ function resolveCredsFile(acct: GmailAccount | undefined, config: ConnectorConfi
     ?? undefined;
 }
 
-async function fetchAccount(
-  credsDir: string,
-  tokenFile: string,
-  label: string,
+/** Fetch a list of message objects from a Gmail query, deduplicating by ID. */
+async function fetchMessages(
+  gmail: ReturnType<typeof google.gmail>,
   query: string,
-  maxMessages: number,
-  credsFile?: string,
-): Promise<Record<string, unknown>> {
-  const oauth2 = getCredentials(credsDir, tokenFile, credsFile);
-  const gmail = google.gmail({ version: "v1", auth: oauth2 });
-
-  // Ensure we search everywhere (inbox, trash, archive, etc.) so that
-  // trashed/archived messages are still found.
-  const effectiveQuery = query.includes("in:anywhere")
-    ? query
-    : `in:anywhere ${query}`;
-
-  // Build a label ID → name map so we can return human-readable names
-  const labelsRes = await gmail.users.labels.list({ userId: "me" });
-  const allLabels = labelsRes.data.labels ?? [];
-  const labelMap = new Map<string, string>();
-  const userLabels: string[] = [];
-  for (const l of allLabels) {
-    if (l.id && l.name) {
-      labelMap.set(l.id, l.name);
-      if (l.type === "user") userLabels.push(l.name);
-    }
-  }
-
+  maxResults: number,
+  seenIds: Set<string>,
+  labelMap: Map<string, string>,
+): Promise<Array<{
+  from: string;
+  subject: string;
+  date: string;
+  snippet: string;
+  labels: string[];
+  trashed: boolean;
+}>> {
   const listResult = await gmail.users.messages.list({
     userId: "me",
-    q: effectiveQuery,
-    maxResults: maxMessages,
+    q: query,
+    maxResults,
   });
 
   const messages = listResult.data.messages ?? [];
   const emails = [];
 
   for (const msgRef of messages) {
+    if (seenIds.has(msgRef.id!)) continue;
+    seenIds.add(msgRef.id!);
+
     const msg = await gmail.users.messages.get({
       userId: "me",
       id: msgRef.id!,
@@ -173,6 +162,60 @@ async function fetchAccount(
     });
   }
 
+  return emails;
+}
+
+async function fetchAccount(
+  credsDir: string,
+  tokenFile: string,
+  label: string,
+  query: string,
+  maxMessages: number,
+  credsFile?: string,
+  trashMaxAge?: string,
+  pinnedLabels?: string[],
+): Promise<Record<string, unknown>> {
+  const oauth2 = getCredentials(credsDir, tokenFile, credsFile);
+  const gmail = google.gmail({ version: "v1", auth: oauth2 });
+
+  // Build a label ID → name map so we can return human-readable names
+  const labelsRes = await gmail.users.labels.list({ userId: "me" });
+  const allLabels = labelsRes.data.labels ?? [];
+  const labelMap = new Map<string, string>();
+  const userLabels: string[] = [];
+  for (const l of allLabels) {
+    if (l.id && l.name) {
+      labelMap.set(l.id, l.name);
+      if (l.type === "user") userLabels.push(l.name);
+    }
+  }
+
+  const seenIds = new Set<string>();
+
+  // Phase 1: Non-trash emails (inbox, archive, labeled — everything except trash)
+  const mainQuery = `${query} -in:trash`;
+  const mainEmails = await fetchMessages(gmail, mainQuery, maxMessages, seenIds, labelMap);
+
+  // Phase 2: Trash emails with a shorter time window (resolution signals only)
+  const effectiveTrashAge = trashMaxAge ?? "1d";
+  const trashQuery = `in:trash newer_than:${effectiveTrashAge}`;
+  const trashEmails = await fetchMessages(gmail, trashQuery, 15, seenIds, labelMap);
+
+  // Phase 3: Pinned labels — important folders fetched with a longer window
+  // These are labels like "Travel Confirmations" where older emails still matter.
+  const pinnedEmails = [];
+  if (pinnedLabels?.length) {
+    for (const pinnedLabel of pinnedLabels) {
+      // Check this label actually exists for this account
+      if (!userLabels.includes(pinnedLabel)) continue;
+      const pinnedQuery = `label:${pinnedLabel.replace(/ /g, "-")}`;
+      const results = await fetchMessages(gmail, pinnedQuery, 5, seenIds, labelMap);
+      pinnedEmails.push(...results);
+    }
+  }
+
+  const emails = [...mainEmails, ...trashEmails, ...pinnedEmails];
+
   // Get inbox unread count — must include in:inbox, otherwise Gmail counts
   // unread across all labels (archived, labeled, etc.)
   const inboxLabel = await gmail.users.labels.get({ userId: "me", id: "INBOX" });
@@ -197,6 +240,8 @@ export function create(config: ConnectorConfig): Connector {
         (config.query as string) ??
         "newer_than:2d -category:promotions -category:social";
       const maxMessages = (config.max_messages as number) ?? 25;
+      const trashMaxAge = (config.trash_max_age as string | undefined);
+      const pinnedLabels = (config.pinned_labels as string[] | undefined);
 
       const accounts = (config.accounts as GmailAccount[] | undefined) ?? [];
 
@@ -213,13 +258,16 @@ export function create(config: ConnectorConfig): Connector {
             await fetchAccount(
               credsDir, tokenFile, acct.name, query, maxMessages,
               resolveCredsFile(acct, config),
+              trashMaxAge,
+              pinnedLabels,
             ),
           );
         }
       } else {
         // Legacy single-account mode
         results = [
-          await fetchAccount(credsDir, "token_gmail.json", "default", query, maxMessages),
+          await fetchAccount(credsDir, "token_gmail.json", "default", query, maxMessages,
+            undefined, trashMaxAge, pinnedLabels),
         ];
       }
 
@@ -232,12 +280,19 @@ export function create(config: ConnectorConfig): Connector {
         0,
       );
 
+      const pinnedNote = pinnedLabels?.length
+        ? ` Pinned labels (${pinnedLabels.join(", ")}) are fetched separately with no time restriction — these contain important reference emails like booking confirmations.`
+        : "";
+
       return {
         source: "gmail",
         description:
           `Gmail: ${results.length} account(s), ${totalEmails} recent emails (query: '${query}'), ${totalUnread} total inbox unread. ` +
+          "Emails are fetched in phases: (1) non-trash emails matching the query, (2) recently trashed emails as resolution signals, " +
+          `(3) pinned label emails for important reference data.${pinnedNote} ` +
           "Each account has: person name, inboxUnread count, userLabels (their custom label names), and email list. " +
-          "Each email has human-readable labels — use these to understand context (e.g. 'KLM Issue', 'Medical', 'Travel Confirmations'). " +
+          "Each email has human-readable labels — use these to understand context. " +
+          "Trashed emails (trashed: true) indicate the person already handled that item — use as resolution signals, not action items. " +
           "Look for: billing/payment notifications (flag if action needed next day), " +
           "trial/subscription signups (warn about upcoming charges), " +
           "shipping confirmations (extract delivery dates), " +
@@ -289,7 +344,10 @@ export function validate(config: ConnectorConfig): Check[] {
   }
 
   checks.push([INFO, `Query: ${config.query ?? "(default)"}`, ""]);
-  checks.push([INFO, `Max messages: ${config.max_messages ?? 25}`, ""]);
+  checks.push([INFO, `Max messages per account: ${config.max_messages ?? 25}`, ""]);
+  checks.push([INFO, `Trash max age: ${config.trash_max_age ?? "1d (default)"}`, ""]);
+  const pinned = config.pinned_labels as string[] | undefined;
+  checks.push([INFO, `Pinned labels: ${pinned?.length ? pinned.join(", ") : "(none)"}`, ""]);
 
   return checks;
 }
