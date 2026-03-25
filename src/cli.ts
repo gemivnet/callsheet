@@ -123,7 +123,7 @@ async function main() {
 
     // Fetch fresh data so the critique can compare against it
     console.log("Fetching current data for comparison...");
-    const results = await fetchAll(config);
+    const { results } = await fetchAll(config);
     const dataPayload = buildDataPayload(results);
 
     const client = new Anthropic({ apiKey });
@@ -146,13 +146,17 @@ async function main() {
 
   // --- Fetch ---
   console.log("Fetching data...");
-  const results = await fetchAll(config);
+  const { results, issues: connectorIssues } = await fetchAll(config);
 
   if (results.length === 0) {
     console.error(
       "No data fetched. Check your config and connector settings.",
     );
     process.exit(1);
+  }
+
+  if (connectorIssues.length) {
+    console.log(`  ${connectorIssues.length} connector(s) had issues — will be noted in brief.`);
   }
 
   const dataPayload = buildDataPayload(results);
@@ -171,7 +175,7 @@ async function main() {
   const model = config.model ?? "claude-sonnet-4-20250514";
 
   console.log(`Generating brief via Claude (${model})...`);
-  const brief = await generateBrief(config, dataPayload);
+  const brief = await generateBrief(config, dataPayload, connectorIssues);
 
   const jsonPath = saveBrief(brief, outputDir);
   console.log(`  JSON: ${jsonPath}`);

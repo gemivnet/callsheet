@@ -21,11 +21,17 @@ export function loadConfig(configPath: string): CallsheetConfig {
   }
 }
 
+export interface ConnectorIssue {
+  connector: string;
+  error: string;
+}
+
 export async function fetchAll(
   config: CallsheetConfig,
-): Promise<ConnectorResult[]> {
+): Promise<{ results: ConnectorResult[]; issues: ConnectorIssue[] }> {
   const connectors = loadConnectors(config as Record<string, unknown>);
   const results: ConnectorResult[] = [];
+  const issues: ConnectorIssue[] = [];
 
   for (const conn of connectors) {
     try {
@@ -34,11 +40,13 @@ export async function fetchAll(
       results.push(result);
       console.log(`  \u2713 ${conn.name}`);
     } catch (e) {
-      console.log(`  \u2717 ${conn.name}: ${e}`);
+      const error = e instanceof Error ? e.message : String(e);
+      issues.push({ connector: conn.name, error });
+      console.log(`  \u2717 ${conn.name}: ${error}`);
     }
   }
 
-  return results;
+  return { results, issues };
 }
 
 export function buildDataPayload(results: ConnectorResult[]): string {
@@ -514,6 +522,18 @@ function buildAutoCloseContext(outputDir: string): string {
 
 // ---------------------------------------------------------------------------
 
+function buildConnectorIssuesContext(issues: ConnectorIssue[]): string {
+  if (!issues.length) return "";
+
+  let ctx = "\n\n## Connector issues\n\n";
+  ctx += "The following data sources had errors during today's fetch. ";
+  ctx += "Mention these briefly in the Executive Brief so the household knows what data is missing and can fix it:\n\n";
+  for (const issue of issues) {
+    ctx += `- **${issue.connector}**: ${issue.error}\n`;
+  }
+  return ctx;
+}
+
 function loadPrompt(config: CallsheetConfig): string {
   const promptPath = join(__dirname, "prompts", "system.md");
   let prompt: string;
@@ -561,6 +581,7 @@ function loadPrompt(config: CallsheetConfig): string {
 export async function generateBrief(
   config: CallsheetConfig,
   dataPayload: string,
+  connectorIssues: ConnectorIssue[] = [],
 ): Promise<Brief> {
   const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
   if (!apiKey) {
@@ -570,7 +591,7 @@ export async function generateBrief(
 
   const client = new Anthropic({ apiKey });
   const model = config.model ?? "claude-sonnet-4-20250514";
-  const systemPrompt = loadPrompt(config);
+  const systemPrompt = loadPrompt(config) + buildConnectorIssuesContext(connectorIssues);
 
   const today = new Date();
   const dateStr = today.toLocaleDateString("en-US", {
