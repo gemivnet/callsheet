@@ -101,13 +101,16 @@ function buildMemoryContext(memories: DailyMemory[]): string {
   ctx += "- Track ongoing situations (packages in transit, bills coming due, project progress)\n";
   ctx += "- Avoid repeating the same insight if nothing has changed\n";
   ctx += "- Notice trends or follow up on previous observations\n\n";
-  ctx += "**IMPORTANT — Memory is not truth. Today's live data always wins:**\n";
+  ctx += "**CRITICAL — Memory is not truth. Today's live data always wins:**\n";
+  ctx += "- Memory is a hint, not a source of truth. EVERY claim from memory must be verified against today's live data.\n";
+  ctx += "- If a memorized issue has NO corresponding email, task, or transaction in today's data, treat it as RESOLVED or outdated — do NOT surface it.\n";
   ctx += "- If a memorized task no longer appears in today's Todoist data, it was completed — do NOT surface it.\n";
   ctx += "- If a memorized issue has a NEWER email showing resolution (approval, confirmation, payment received), treat it as RESOLVED.\n";
   ctx += "- Check the 'recently_completed' list in Todoist data — anything there is DONE.\n";
   ctx += "- Check trashed/archived emails — if someone trashed a notification, they already handled it.\n";
   ctx += "- Do NOT let memory override clear resolution signals in today's data.\n";
-  ctx += "- If a memory item has been repeated 3+ days with no change, it's stale — either surface it as a single task or drop it entirely.\n\n";
+  ctx += "- The ABSENCE of data about a memorized item IS a resolution signal. If memory says 'KLM LOA rejected' but there are zero KLM emails in today's data, do NOT re-surface it.\n";
+  ctx += "- If a memory item has been repeated 3+ days with no change, it's stale — drop it entirely.\n\n";
 
   for (const mem of memories) {
     ctx += `### ${mem.date}\n`;
@@ -123,7 +126,7 @@ function buildMemoryContext(memories: DailyMemory[]): string {
 async function generateMemoryInsights(
   client: Anthropic,
   model: string,
-  brief: Brief,
+  _brief: Brief,
   dataPayload: string,
 ): Promise<string[]> {
   try {
@@ -136,17 +139,20 @@ async function generateMemoryInsights(
         "ongoing situations (deliveries, upcoming deadlines, bills due soon), " +
         "notable patterns (spending spikes, inbox growth), " +
         "things to follow up on tomorrow. " +
-        "IMPORTANT: Only memorize items that are backed by TODAY's live connector data. " +
-        "Do NOT re-memorize tasks, reminders, or action items from previous memory notes " +
-        "unless they still appear in today's raw data. If a task was in yesterday's memory " +
-        "but is absent from today's task list, it was completed — do not carry it forward. " +
+        "CRITICAL: You are given ONLY the raw connector data (emails, tasks, calendar, etc.). " +
+        "Every insight you return MUST be directly traceable to a specific item in this data — " +
+        "a specific email, task, calendar event, or transaction. " +
+        "If you cannot point to the exact data source for a claim, do NOT include it. " +
+        "Do NOT infer or assume ongoing situations that are not evidenced in the data. " +
+        "Do NOT carry forward items from the brief that lack backing data — the brief may " +
+        "contain stale items from previous memory that are no longer relevant. " +
         "Skip routine/static info. Be concise. Return ONLY the JSON array.",
       messages: [
         {
           role: "user",
           content:
-            `Today's brief:\n${JSON.stringify(brief, null, 2)}\n\n` +
-            `Raw data summary (key sources):\n${dataPayload.slice(0, 4000)}`,
+            "Here is today's raw connector data. Extract only facts that are " +
+            "directly evidenced in this data:\n\n" + dataPayload,
         },
       ],
     });
