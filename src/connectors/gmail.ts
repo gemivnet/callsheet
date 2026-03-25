@@ -60,12 +60,14 @@ export async function auth(credsDir: string, accountName?: string, credsFile?: s
 
   const server = createServer();
   const code = await new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Auth timeout (2 min)")), 120_000);
     server.on("request", (req, res) => {
       const url = new URL(req.url!, "http://localhost:3000");
       const c = url.searchParams.get("code");
       if (c) {
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end("<h1>Auth complete! You can close this tab.</h1>");
+        clearTimeout(timeout);
         resolve(c);
       } else {
         res.writeHead(400);
@@ -73,7 +75,6 @@ export async function auth(credsDir: string, accountName?: string, credsFile?: s
       }
     });
     server.listen(3000);
-    setTimeout(() => reject(new Error("Auth timeout (2 min)")), 120_000);
   });
 
   server.close();
@@ -89,6 +90,13 @@ interface GmailAccount {
   name: string;
   credentials_file?: string;
   token_file?: string;
+}
+
+/** Resolve credentials file for an account: account-level > connector-level > default */
+function resolveCredsFile(acct: GmailAccount | undefined, config: ConnectorConfig): string | undefined {
+  return acct?.credentials_file
+    ?? (config.credentials_file as string | undefined)
+    ?? undefined;
 }
 
 async function fetchAccount(
@@ -203,7 +211,7 @@ export function create(config: ConnectorConfig): Connector {
           results.push(
             await fetchAccount(
               credsDir, tokenFile, acct.name, query, maxMessages,
-              acct.credentials_file,
+              resolveCredsFile(acct, config),
             ),
           );
         }
@@ -250,7 +258,7 @@ export function validate(config: ConnectorConfig): Check[] {
   if (accounts.length > 0) {
     checks.push([PASS, `${accounts.length} account(s) configured`, ""]);
     for (const acct of accounts) {
-      const credsFile = acct.credentials_file ?? "credentials.json";
+      const credsFile = resolveCredsFile(acct, config) ?? "credentials.json";
       const credsPath = join(credsDir, credsFile);
       checks.push(
         existsSync(credsPath)
@@ -290,6 +298,6 @@ export const authFromConfig: ConnectorAuth = async (credsDir, config, accountNam
   const matchedAcct = accountName
     ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
     : undefined;
-  const credsFile = matchedAcct?.credentials_file;
+  const credsFile = resolveCredsFile(matchedAcct, config);
   await auth(credsDir, accountName, credsFile);
 };

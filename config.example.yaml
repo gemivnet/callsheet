@@ -21,23 +21,20 @@ connectors:
   google_calendar:
     enabled: true
     credentials_dir: secrets
+    credentials_file: credentials.json   # shared OAuth app — one app for all accounts
     lookahead_days: 7
-    # Multi-account: each person gets their own OAuth token + calendar list
+    # Multi-account: each person gets their own OAuth token + calendar list.
+    # All accounts use the shared credentials_file above unless overridden.
     accounts:
       - name: Person 1
-        credentials_file: credentials.json
         calendar_ids:
           - primary
           # - "other_calendar_id@group.calendar.google.com"
           # - "en.usa#holiday@group.v.calendar.google.com"   # US holidays
       # - name: Person 2
-      #   credentials_file: credentials_person2.json
+      #   credentials_file: other_app.json   # override per-account if needed
       #   calendar_ids:
       #     - primary
-    # Legacy single-account mode (no accounts block):
-    # credentials_file: credentials.json
-    # calendar_ids:
-    #   - primary
 
   todoist:
     enabled: true
@@ -50,8 +47,12 @@ connectors:
   gmail:
     enabled: false
     credentials_dir: secrets
+    credentials_file: credentials.json   # shared OAuth app — one app for all accounts
     query: "newer_than:2d -category:promotions -category:social"
     max_messages: 25
+    # accounts:
+    #   - name: Person 1
+    #   - name: Person 2
 
   weather:
     enabled: true

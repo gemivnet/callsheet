@@ -14,8 +14,8 @@
     "test": "tsx src/cli.ts --test",
     "test:connector": "tsx src/cli.ts --test",
     "data": "tsx src/cli.ts --show-data",
-    "auth:gcal": "tsx src/cli.ts --auth google_calendar",
-    "auth:gmail": "tsx src/cli.ts --auth gmail",
+    "auth:gcal": "sh -c 'tsx src/cli.ts --auth google_calendar${1:+:$1}' --",
+    "auth:gmail": "sh -c 'tsx src/cli.ts --auth gmail${1:+:$1}' --",
     "review": "tsx src/cli.ts --review",
     "connectors": "tsx src/cli.ts --list-connectors"
   },
