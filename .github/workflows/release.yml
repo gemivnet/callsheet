@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
       - uses: actions/setup-node@v4
         with:
@@ -29,23 +29,25 @@ jobs:
 
       - run: yarn install --immutable
 
-      # Detect if this is a version bump commit (from `yarn release`)
+      # A stable release is ONLY when `yarn release` (changeset version) was run.
+      # That commit modifies CHANGELOG.md and consumes .changeset/*.md files.
+      # Everything else is a preview/canary build.
       - name: Detect release type
         id: detect
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          # Check if this version is already tagged (= not a new release)
-          if git tag -l "v$VERSION" | grep -q .; then
-            echo "type=preview" >> "$GITHUB_OUTPUT"
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            echo "tag=${VERSION}-preview.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}-preview.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          else
+          # Check if CHANGELOG.md was modified in this commit (= changeset version bump)
+          if git diff --name-only HEAD~1 HEAD | grep -q '^CHANGELOG.md$'; then
             echo "type=stable" >> "$GITHUB_OUTPUT"
             echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=preview" >> "$GITHUB_OUTPUT"
+            echo "tag=${VERSION}-preview.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}-preview.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Log in to GHCR
