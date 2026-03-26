@@ -10,3 +10,6 @@ config.yaml
 config.*.yaml
 !config.example.yaml
 feedback.md
+PLAN.md
+coverage/
+reports/

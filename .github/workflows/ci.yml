@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier
+        run: npm run format:check
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tests
+        id: tests
+        run: npm test -- --coverage --reporters=default --reporters=jest-junit
+        env:
+          JEST_JUNIT_OUTPUT_DIR: ./reports
+          JEST_JUNIT_OUTPUT_NAME: junit.xml
+
+      - name: Test report annotations
+        uses: dorny/test-reporter@v1
+        if: always() && hashFiles('reports/junit.xml') != ''
+        with:
+          name: Jest Results
+          path: reports/junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      - name: Coverage summary
+        if: steps.tests.outcome == 'success'
+        id: coverage
+        run: |
+          node -e "
+            const c = require('./coverage/coverage-summary.json').total;
+            const fmt = (v) => v.pct.toFixed(1) + '%';
+            const bar = (v) => {
+              const filled = Math.round(v.pct / 5);
+              return '\u2588'.repeat(filled) + '\u2591'.repeat(20 - filled);
+            };
+            const emoji = (v) => v.pct >= 80 ? '\u2705' : v.pct >= 50 ? '\u26a0\ufe0f' : '\u274c';
+
+            let md = '## Test Coverage\n\n';
+            md += '| Metric | Coverage | Bar |\n';
+            md += '|--------|----------|-----|\n';
+            md += '| ' + emoji(c.lines) + ' Lines | **' + fmt(c.lines) + '** | \`' + bar(c.lines) + '\` |\n';
+            md += '| ' + emoji(c.branches) + ' Branches | **' + fmt(c.branches) + '** | \`' + bar(c.branches) + '\` |\n';
+            md += '| ' + emoji(c.functions) + ' Functions | **' + fmt(c.functions) + '** | \`' + bar(c.functions) + '\` |\n';
+            md += '| ' + emoji(c.statements) + ' Statements | **' + fmt(c.statements) + '** | \`' + bar(c.statements) + '\` |\n';
+            md += '\n> Coverage target: 70% lines\n';
+
+            require('fs').writeFileSync('coverage-summary.md', md);
+            console.log('LINES=' + c.lines.pct);
+          " | while IFS='=' read -r key val; do
+            echo "$key=$val" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Job summary
+        if: steps.tests.outcome == 'success'
+        run: cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Determine badge color
+        if: steps.tests.outcome == 'success'
+        id: badge
+        run: |
+          PCT="${{ steps.coverage.outputs.LINES }}"
+          COLOR="red"
+          if (( $(echo "$PCT >= 80" | bc -l) )); then
+            COLOR="brightgreen"
+          elif (( $(echo "$PCT >= 50" | bc -l) )); then
+            COLOR="yellow"
+          fi
+          echo "color=$COLOR" >> "$GITHUB_OUTPUT"
+          echo "pct=$PCT" >> "$GITHUB_OUTPUT"
+
+      - name: Update coverage badge
+        if: steps.tests.outcome == 'success'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        continue-on-error: true
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ vars.COVERAGE_GIST_ID }}
+          filename: callsheet-coverage.json
+          label: coverage
+          message: ${{ steps.badge.outputs.pct }}%
+          color: ${{ steps.badge.outputs.color }}
+
+      - name: Upload coverage artifact
+        if: steps.tests.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/lcov-report/
+          retention-days: 14
