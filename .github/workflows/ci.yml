@@ -18,7 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
+
+      - run: corepack enable
 
       - run: yarn install --immutable
 
@@ -37,7 +38,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
+
+      - run: corepack enable
 
       - run: yarn install --immutable
 
