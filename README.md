@@ -1,11 +1,9 @@
 ![CI](https://github.com/gemivnet/callsheet/actions/workflows/ci.yml/badge.svg)
-![Tests](https://img.shields.io/badge/tests-135_passing-brightgreen)
+[![codecov](https://codecov.io/gh/gemivnet/callsheet/graph/badge.svg)](https://codecov.io/gh/gemivnet/callsheet)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)
 ![License](https://img.shields.io/github/license/gemivnet/callsheet)
 ![Last Commit](https://img.shields.io/github/last-commit/gemivnet/callsheet)
-<!-- Coverage badge: uncomment once GIST_TOKEN + COVERAGE_GIST_ID are configured -->
-<!-- ![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/gemivnet/COVERAGE_GIST_ID/raw/callsheet-coverage.json) -->
 
 # Callsheet
 
