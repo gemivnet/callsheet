@@ -18,15 +18,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: yarn
 
-      - run: npm ci
+      - run: yarn install --immutable
 
       - name: ESLint
-        run: npm run lint
+        run: yarn lint
 
       - name: Prettier
-        run: npm run format:check
+        run: yarn format:check
 
   test:
     name: Test
@@ -37,13 +37,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: yarn
 
-      - run: npm ci
+      - run: yarn install --immutable
 
       - name: Run tests
         id: tests
-        run: npm test -- --coverage --reporters=default --reporters=jest-junit
+        run: yarn test --coverage --reporters=default --reporters=jest-junit
         env:
           JEST_JUNIT_OUTPUT_DIR: ./reports
           JEST_JUNIT_OUTPUT_NAME: junit.xml
