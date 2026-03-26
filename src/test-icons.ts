@@ -1,13 +1,13 @@
 /** Shared ANSI icons for connector diagnostics. */
 
 const C = {
-  BOLD: "\x1b[1m",
-  DIM: "\x1b[2m",
-  GREEN: "\x1b[32m",
-  RED: "\x1b[31m",
-  YELLOW: "\x1b[33m",
-  CYAN: "\x1b[36m",
-  RESET: "\x1b[0m",
+  BOLD: '\x1b[1m',
+  DIM: '\x1b[2m',
+  GREEN: '\x1b[32m',
+  RED: '\x1b[31m',
+  YELLOW: '\x1b[33m',
+  CYAN: '\x1b[36m',
+  RESET: '\x1b[0m',
 } as const;
 
 export const PASS = `${C.GREEN}\u2713${C.RESET}`;

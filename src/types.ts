@@ -2,7 +2,7 @@ export interface ConnectorResult {
   source: string;
   description: string;
   data: Record<string, unknown>;
-  priorityHint: "high" | "normal" | "low";
+  priorityHint: 'high' | 'normal' | 'low';
 }
 
 export interface Connector {

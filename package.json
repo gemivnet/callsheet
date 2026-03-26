@@ -17,7 +17,18 @@
     "auth:gcal": "sh -c 'tsx src/cli.ts --auth google_calendar${1:+:$1}' --",
     "auth:gmail": "sh -c 'tsx src/cli.ts --auth gmail${1:+:$1}' --",
     "review": "tsx src/cli.ts --review",
-    "connectors": "tsx src/cli.ts --list-connectors"
+    "connectors": "tsx src/cli.ts --list-connectors",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write 'src/**/*.{ts,tsx}'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ]
   },
   "license": "MIT",
   "engines": {
@@ -35,10 +46,18 @@
     "react": "^19.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.15.3",
     "@types/react": "^19.1.2",
+    "eslint": "^10.1.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.57.2"
   }
 }

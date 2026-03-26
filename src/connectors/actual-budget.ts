@@ -1,31 +1,31 @@
-import type { Connector, ConnectorConfig, ConnectorResult, Check } from "../types.js";
-import { PASS, FAIL, INFO } from "../test-icons.js";
+import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
+import { PASS, FAIL, INFO } from '../test-icons.js';
 
 interface BudgetCategoryGroup {
   id: string;
   name: string;
-  categories: Array<{
+  categories: {
     id: string;
     name: string;
     budgeted: number;
     spent: number;
     balance: number;
-  }>;
+  }[];
 }
 
 export function create(config: ConnectorConfig): Connector {
   return {
-    name: "actual_budget",
-    description: "Actual Budget — recent transactions, spending summary, and budget alerts",
+    name: 'actual_budget',
+    description: 'Actual Budget — recent transactions, spending summary, and budget alerts',
 
     async fetch(): Promise<ConnectorResult> {
       // Dynamic import since @actual-app/api uses CJS
-      const api = await import("@actual-app/api");
+      const api = await import('@actual-app/api');
 
       const serverURL = config.server_url as string;
       const password = config.password_env
-        ? process.env[config.password_env as string] ?? ""
-        : (config.password as string) ?? "";
+        ? (process.env[config.password_env as string] ?? '')
+        : ((config.password as string) ?? '');
       const syncId = config.sync_id as string;
       const budgetPassword = config.budget_password_env
         ? process.env[config.budget_password_env as string]
@@ -42,7 +42,7 @@ export function create(config: ConnectorConfig): Connector {
       console.info = noop;
 
       await api.init({
-        dataDir: "/tmp/actual-budget-cache",
+        dataDir: '/tmp/actual-budget-cache',
         serverURL,
         password,
       });
@@ -78,13 +78,9 @@ export function create(config: ConnectorConfig): Connector {
           const acct = account as { id: string; name: string; closed?: boolean };
           if (acct.closed) continue;
 
-          const txns = await api.getTransactions(
-            acct.id,
-            fmt(startDate),
-            fmt(endDate),
-          );
+          const txns = await api.getTransactions(acct.id, fmt(startDate), fmt(endDate));
 
-          for (const t of txns as Array<{
+          for (const t of txns as {
             id: string;
             date: string;
             amount: number;
@@ -92,22 +88,20 @@ export function create(config: ConnectorConfig): Connector {
             category: string;
             notes: string;
             account: string;
-          }>) {
+          }[]) {
             allTransactions.push({
               date: t.date,
               amount: api.utils.integerToAmount(t.amount),
-              payee: payeeMap.get(t.payee) ?? t.payee ?? "",
-              category: categoryMap.get(t.category) ?? t.category ?? "Uncategorized",
+              payee: payeeMap.get(t.payee) ?? t.payee ?? '',
+              category: categoryMap.get(t.category) ?? t.category ?? 'Uncategorized',
               account: accountMap.get(t.account) ?? acct.name,
-              notes: t.notes ?? "",
+              notes: t.notes ?? '',
             });
           }
         }
 
         // Sort by date descending
-        allTransactions.sort((a, b) =>
-          (b.date as string).localeCompare(a.date as string),
-        );
+        allTransactions.sort((a, b) => (b.date as string).localeCompare(a.date as string));
 
         // Compute spending summary by category
         const categoryTotals = new Map<string, number>();
@@ -135,7 +129,7 @@ export function create(config: ConnectorConfig): Connector {
         const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
         const budgetAlerts: Record<string, unknown>[] = [];
         try {
-          const budgetMonth = await api.getBudgetMonth(currentMonth) as unknown as {
+          const budgetMonth = (await api.getBudgetMonth(currentMonth)) as unknown as {
             totalBudgeted: number;
             totalSpent: number;
             totalBalance: number;
@@ -167,7 +161,7 @@ export function create(config: ConnectorConfig): Connector {
                   budgeted,
                   spent,
                   remaining: Math.round((budgeted - spent) * 100) / 100,
-                  status: "over_budget",
+                  status: 'over_budget',
                   pctUsed: Math.round(pctUsed * 100),
                 });
               } else if (paceRatio > 1.3 && spent > 20) {
@@ -178,27 +172,27 @@ export function create(config: ConnectorConfig): Connector {
                   budgeted,
                   spent,
                   remaining: Math.round((budgeted - spent) * 100) / 100,
-                  status: "on_pace_to_exceed",
+                  status: 'on_pace_to_exceed',
                   pctUsed: Math.round(pctUsed * 100),
                   projectedOverage: Math.round((spent / monthProgress - budgeted) * 100) / 100,
                 });
               }
             }
           }
-        } catch (e) {
+        } catch {
           // Budget data not available — skip alerts silently
         }
 
         return {
-          source: "actual_budget",
+          source: 'actual_budget',
           description:
             `Actual Budget: ${allTransactions.length} transactions over the last ${lookbackDays} days. ` +
             `Total spending: $${Math.round(totalSpent * 100) / 100}, Total income: $${Math.round(totalIncome * 100) / 100}. ` +
             (budgetAlerts.length
               ? `${budgetAlerts.length} budget alert(s) — categories over or on pace to exceed their monthly budget. `
-              : "") +
-            "Use this data to flag notable spending patterns, large purchases, upcoming bills, " +
-            "or anything that connects to calendar events or tasks. " +
+              : '') +
+            'Use this data to flag notable spending patterns, large purchases, upcoming bills, ' +
+            'or anything that connects to calendar events or tasks. ' +
             "Budget alerts with status 'over_budget' are URGENT — surface them prominently. " +
             "Alerts with 'on_pace_to_exceed' are warnings — mention if relevant. " +
             "Mention spending insights only if they're genuinely useful — don't list every transaction.",
@@ -213,7 +207,7 @@ export function create(config: ConnectorConfig): Connector {
             budgetAlerts,
             recentTransactions: allTransactions.slice(0, 30),
           },
-          priorityHint: "normal",
+          priorityHint: 'normal',
         };
       } finally {
         await api.shutdown();
@@ -230,34 +224,28 @@ export function validate(config: ConnectorConfig): Check[] {
 
   const serverUrl = config.server_url as string | undefined;
   checks.push(
-    serverUrl
-      ? [PASS, `Server: ${serverUrl}`, ""]
-      : [FAIL, "server_url not configured", ""],
+    serverUrl ? [PASS, `Server: ${serverUrl}`, ''] : [FAIL, 'server_url not configured', ''],
   );
 
   const syncId = config.sync_id as string | undefined;
-  checks.push(
-    syncId
-      ? [PASS, `Sync ID: ${syncId}`, ""]
-      : [FAIL, "sync_id not configured", ""],
-  );
+  checks.push(syncId ? [PASS, `Sync ID: ${syncId}`, ''] : [FAIL, 'sync_id not configured', '']);
 
   const passwordEnv = config.password_env as string | undefined;
   if (passwordEnv) {
-    const pw = process.env[passwordEnv] ?? "";
+    const pw = process.env[passwordEnv] ?? '';
     checks.push(
       pw
-        ? [PASS, `${passwordEnv} is set`, ""]
-        : [FAIL, `${passwordEnv} is NOT set`, "Add it to .env"],
+        ? [PASS, `${passwordEnv} is set`, '']
+        : [FAIL, `${passwordEnv} is NOT set`, 'Add it to .env'],
     );
   } else if (config.password) {
-    checks.push([PASS, "Password configured inline", ""]);
+    checks.push([PASS, 'Password configured inline', '']);
   } else {
-    checks.push([FAIL, "No password configured", "Set password or password_env"]);
+    checks.push([FAIL, 'No password configured', 'Set password or password_env']);
   }
 
   const days = (config.lookback_days as number) ?? 7;
-  checks.push([INFO, `Lookback: ${days} days`, ""]);
+  checks.push([INFO, `Lookback: ${days} days`, '']);
 
   return checks;
 }
