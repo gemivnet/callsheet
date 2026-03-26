@@ -1,7 +1,7 @@
-import type { Connector, ConnectorConfig, ConnectorResult, Check } from "../types.js";
-import { PASS, FAIL, INFO } from "../test-icons.js";
+import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
+import { PASS, FAIL, INFO } from '../test-icons.js';
 
-const HEADERS = { "User-Agent": "callsheet-brief/1.0" };
+const HEADERS = { 'User-Agent': 'callsheet-brief/1.0' };
 
 interface NwsAlert {
   event: string;
@@ -21,9 +21,9 @@ async function fetchAlerts(lat: number, lon: number): Promise<NwsAlert[]> {
     if (!resp.ok) return [];
 
     const data = (await resp.json()) as {
-      features: Array<{
+      features: {
         properties: Record<string, unknown>;
-      }>;
+      }[];
     };
 
     return (data.features ?? []).map((f) => {
@@ -32,18 +32,30 @@ async function fetchAlerts(lat: number, lon: number): Promise<NwsAlert[]> {
       const expires = p.expires as string | null;
 
       return {
-        event: (p.event as string) ?? "",
-        severity: (p.severity as string) ?? "",
-        urgency: (p.urgency as string) ?? "",
-        headline: (p.headline as string) ?? "",
-        onset: onset ? new Date(onset).toLocaleString("en-US", {
-          weekday: "short", month: "short", day: "numeric",
-          hour: "numeric", minute: "2-digit", hour12: true,
-        }) : null,
-        expires: expires ? new Date(expires).toLocaleString("en-US", {
-          weekday: "short", month: "short", day: "numeric",
-          hour: "numeric", minute: "2-digit", hour12: true,
-        }) : null,
+        event: (p.event as string) ?? '',
+        severity: (p.severity as string) ?? '',
+        urgency: (p.urgency as string) ?? '',
+        headline: (p.headline as string) ?? '',
+        onset: onset
+          ? new Date(onset).toLocaleString('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            })
+          : null,
+        expires: expires
+          ? new Date(expires).toLocaleString('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            })
+          : null,
       };
     });
   } catch {
@@ -53,7 +65,7 @@ async function fetchAlerts(lat: number, lon: number): Promise<NwsAlert[]> {
 
 export function create(config: ConnectorConfig): Connector {
   return {
-    name: "weather",
+    name: 'weather',
     description: "Weather — today's forecast + active alerts from NWS (free, US only)",
 
     async fetch(): Promise<ConnectorResult> {
@@ -62,12 +74,11 @@ export function create(config: ConnectorConfig): Connector {
       const location = (config.location as string) ?? `${lat},${lon}`;
 
       // Step 1: Get the forecast grid endpoint for this location
-      const pointResp = await fetch(
-        `https://api.weather.gov/points/${lat},${lon}`,
-        { headers: HEADERS, signal: AbortSignal.timeout(10_000) },
-      );
-      if (!pointResp.ok)
-        throw new Error(`NWS points API: ${pointResp.status}`);
+      const pointResp = await fetch(`https://api.weather.gov/points/${lat},${lon}`, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!pointResp.ok) throw new Error(`NWS points API: ${pointResp.status}`);
       const pointData = (await pointResp.json()) as {
         properties: { forecast: string; forecastHourly: string };
       };
@@ -78,12 +89,11 @@ export function create(config: ConnectorConfig): Connector {
         headers: HEADERS,
         signal: AbortSignal.timeout(10_000),
       });
-      if (!forecastResp.ok)
-        throw new Error(`NWS forecast API: ${forecastResp.status}`);
+      if (!forecastResp.ok) throw new Error(`NWS forecast API: ${forecastResp.status}`);
       const forecastData = (await forecastResp.json()) as {
         properties: { periods: Record<string, unknown>[] };
       };
-      const periods = forecastData.properties.periods;
+      const { periods } = forecastData.properties;
 
       // Take today + tonight + tomorrow (first 3-4 periods)
       const forecast = periods.slice(0, 4).map((p: Record<string, unknown>) => ({
@@ -101,23 +111,23 @@ export function create(config: ConnectorConfig): Connector {
       const alerts = await fetchAlerts(lat, lon);
 
       const alertSummary = alerts.length
-        ? `${alerts.length} active alert(s): ${alerts.map((a) => a.event).join(", ")}. `
-        : "";
+        ? `${alerts.length} active alert(s): ${alerts.map((a) => a.event).join(', ')}. `
+        : '';
 
       return {
-        source: "weather",
+        source: 'weather',
         description:
           `Weather forecast for ${location}. ${alertSummary}` +
-          "Includes today, tonight, and tomorrow. " +
+          'Includes today, tonight, and tomorrow. ' +
           (alerts.length
-            ? "**Active weather alerts are HIGH PRIORITY** — surface them prominently in the Executive Brief. " +
+            ? '**Active weather alerts are HIGH PRIORITY** — surface them prominently in the Executive Brief. ' +
               "Include the alert type, timing, and how it affects the day's plans (driving, flying, outdoor events). "
-            : "") +
-          "For routine weather, include a one-line summary. " +
-          "Mention weather if it affects plans (rain on outdoor event days, " +
-          "extreme temps, icy roads, high winds). Skip if unremarkable.",
+            : '') +
+          'For routine weather, include a one-line summary. ' +
+          'Mention weather if it affects plans (rain on outdoor event days, ' +
+          'extreme temps, icy roads, high winds). Skip if unremarkable.',
         data: { location, periods: forecast, alerts },
-        priorityHint: alerts.length ? "high" : "low",
+        priorityHint: alerts.length ? 'high' : 'low',
       };
     },
   };
@@ -129,11 +139,11 @@ export function validate(config: ConnectorConfig): Check[] {
   const lon = config.lon as number | undefined;
 
   if (lat != null && lon != null) {
-    checks.push([PASS, `Location: ${config.location ?? ""}`, `lat=${lat}, lon=${lon}`]);
+    checks.push([PASS, `Location: ${config.location ?? ''}`, `lat=${lat}, lon=${lon}`]);
   } else {
-    checks.push([FAIL, "Lat/lon not configured", ""]);
+    checks.push([FAIL, 'Lat/lon not configured', '']);
   }
 
-  checks.push([INFO, "NWS API \u2014 no auth required", "Forecast + active alerts (US only)"]);
+  checks.push([INFO, 'NWS API \u2014 no auth required', 'Forecast + active alerts (US only)']);
   return checks;
 }

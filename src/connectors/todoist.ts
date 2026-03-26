@@ -1,7 +1,7 @@
-import type { Connector, ConnectorConfig, ConnectorResult, Check } from "../types.js";
-import { PASS, FAIL } from "../test-icons.js";
+import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
+import { PASS, FAIL } from '../test-icons.js';
 
-const API = "https://api.todoist.com/api/v1";
+const API = 'https://api.todoist.com/api/v1';
 
 interface TodoistTask {
   id: string;
@@ -31,10 +31,7 @@ interface PaginatedResponse<T> {
   next_cursor: string | null;
 }
 
-async function fetchAccount(
-  token: string,
-  label: string,
-): Promise<Record<string, unknown>> {
+async function fetchAccount(token: string, label: string): Promise<Record<string, unknown>> {
   const headers = { Authorization: `Bearer ${token}` };
 
   async function get<T = TodoistTask>(
@@ -46,9 +43,8 @@ async function fetchAccount(
 
     do {
       const url = new URL(`${API}/${endpoint}`);
-      if (params)
-        Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-      if (cursor) url.searchParams.set("cursor", cursor);
+      if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+      if (cursor) url.searchParams.set('cursor', cursor);
 
       const resp = await fetch(url, {
         headers,
@@ -63,14 +59,12 @@ async function fetchAccount(
     return all;
   }
 
-  const projectList = await get<{ id: string; name: string; inbox_project?: boolean }>("projects");
-  const projects = Object.fromEntries(
-    projectList.map((p) => [p.id, p.name]),
-  );
+  const projectList = await get<{ id: string; name: string; inbox_project?: boolean }>('projects');
+  const projects = Object.fromEntries(projectList.map((p) => [p.id, p.name]));
   const inboxId = projectList.find((p) => p.inbox_project)?.id;
 
   // Fetch all open tasks across all projects
-  const allTasks = await get("tasks");
+  const allTasks = await get('tasks');
 
   // Fetch recently completed tasks (last 3 days) so the memory system
   // can see what was resolved and stop re-flagging completed items.
@@ -80,9 +74,9 @@ async function fetchAccount(
     since.setDate(since.getDate() - 3);
     const until = new Date();
     const url = new URL(`${API}/tasks/completed/by_completion_date`);
-    url.searchParams.set("since", since.toISOString());
-    url.searchParams.set("until", until.toISOString());
-    url.searchParams.set("limit", "50");
+    url.searchParams.set('since', since.toISOString());
+    url.searchParams.set('until', until.toISOString());
+    url.searchParams.set('limit', '50');
     const resp = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(15_000),
@@ -99,11 +93,11 @@ async function fetchAccount(
     return {
       id: t.id,
       content: t.content,
-      description: (t.description ?? "").slice(0, 200),
-      project: projects[t.project_id ?? ""] ?? "",
+      description: (t.description ?? '').slice(0, 200),
+      project: projects[t.project_id ?? ''] ?? '',
       priority: t.priority ?? 1,
-      dueDate: t.due?.date ?? "",
-      dueString: t.due?.string ?? "",
+      dueDate: t.due?.date ?? '',
+      dueString: t.due?.string ?? '',
       isRecurring: t.due?.is_recurring ?? false,
     };
   }
@@ -114,9 +108,7 @@ async function fetchAccount(
     if (!t.due) return false;
     return t.due.date <= today;
   });
-  const inboxTasks = allTasks.filter(
-    (t) => t.project_id === inboxId && !t.due,
-  );
+  const inboxTasks = allTasks.filter((t) => t.project_id === inboxId && !t.due);
   const todayIds = new Set(todayTasks.map((t) => t.id));
   const inboxIds = new Set(inboxTasks.map((t) => t.id));
   const upcomingTasks = allTasks.filter((t) => {
@@ -126,9 +118,7 @@ async function fetchAccount(
     sevenDays.setDate(sevenDays.getDate() + 7);
     return t.due.date <= sevenDays.toISOString().slice(0, 10);
   });
-  const noDueTasks = allTasks.filter(
-    (t) => !t.due && t.project_id !== inboxId,
-  );
+  const noDueTasks = allTasks.filter((t) => !t.due && t.project_id !== inboxId);
 
   return {
     person: label,
@@ -139,7 +129,7 @@ async function fetchAccount(
     recently_completed: recentlyCompleted.map((t) => ({
       id: t.id,
       content: t.content,
-      project: projects[t.project_id ?? ""] ?? "",
+      project: projects[t.project_id ?? ''] ?? '',
       completed_at: t.completed_at,
     })),
   };
@@ -147,39 +137,28 @@ async function fetchAccount(
 
 export function create(config: ConnectorConfig): Connector {
   return {
-    name: "todoist",
-    description: "Todoist — tasks, inbox, and upcoming for each person",
+    name: 'todoist',
+    description: 'Todoist — tasks, inbox, and upcoming for each person',
 
     async fetch(): Promise<ConnectorResult> {
-      const accounts = (config.accounts ?? []) as Array<{
+      const accounts = (config.accounts ?? []) as {
         name: string;
         token_env: string;
-      }>;
+      }[];
       const results: Record<string, unknown>[] = [];
 
       for (const acct of accounts) {
-        const token = process.env[acct.token_env] ?? "";
+        const token = process.env[acct.token_env] ?? '';
         if (!token) {
-          console.log(
-            `  Warning: ${acct.token_env} not set, skipping ${acct.name}`,
-          );
+          console.log(`  Warning: ${acct.token_env} not set, skipping ${acct.name}`);
           continue;
         }
         results.push(await fetchAccount(token, acct.name));
       }
 
-      const totalToday = results.reduce(
-        (sum, r) => sum + (r.today as unknown[]).length,
-        0,
-      );
-      const totalInbox = results.reduce(
-        (sum, r) => sum + (r.inbox as unknown[]).length,
-        0,
-      );
-      const totalBacklog = results.reduce(
-        (sum, r) => sum + (r.backlog as unknown[]).length,
-        0,
-      );
+      const totalToday = results.reduce((sum, r) => sum + (r.today as unknown[]).length, 0);
+      const totalInbox = results.reduce((sum, r) => sum + (r.inbox as unknown[]).length, 0);
+      const totalBacklog = results.reduce((sum, r) => sum + (r.backlog as unknown[]).length, 0);
 
       const totalCompleted = results.reduce(
         (sum, r) => sum + ((r.recently_completed as unknown[])?.length ?? 0),
@@ -187,18 +166,18 @@ export function create(config: ConnectorConfig): Connector {
       );
 
       return {
-        source: "todoist",
+        source: 'todoist',
         description:
           `Todoist data for ${results.length} account(s). ` +
           `${totalToday} tasks due today/overdue, ${totalInbox} inbox items, ${totalBacklog} backlog items, ${totalCompleted} recently completed. ` +
           "Each account has 'today' (due today + overdue), 'inbox' (unsorted items in Inbox project), " +
           "'upcoming' (next 7 days), 'backlog' (tasks with no due date across all projects), " +
           "and 'recently_completed' (tasks finished in the last 3 days — use these to recognize resolved items " +
-          "and do NOT re-flag completed tasks from memory). " +
-          "Priority 4 = highest (p1 in UI). " +
+          'and do NOT re-flag completed tasks from memory). ' +
+          'Priority 4 = highest (p1 in UI). ' +
           "Inbox items are not necessarily actionable today — they're things to be aware of or process.",
         data: { accounts: results },
-        priorityHint: "high",
+        priorityHint: 'high',
       };
     },
   };
@@ -206,24 +185,22 @@ export function create(config: ConnectorConfig): Connector {
 
 export function validate(config: ConnectorConfig): Check[] {
   const checks: Check[] = [];
-  const accounts = (config.accounts ?? []) as Array<{ name: string; token_env: string }>;
+  const accounts = (config.accounts ?? []) as { name: string; token_env: string }[];
 
   if (!accounts.length) {
-    checks.push([FAIL, "No accounts configured", ""]);
+    checks.push([FAIL, 'No accounts configured', '']);
     return checks;
   }
 
-  checks.push([PASS, `${accounts.length} account(s) configured`, ""]);
+  checks.push([PASS, `${accounts.length} account(s) configured`, '']);
 
   for (const acct of accounts) {
-    const token = process.env[acct.token_env] ?? "";
+    const token = process.env[acct.token_env] ?? '';
     if (token) {
-      const masked = token.length > 12
-        ? token.slice(0, 8) + "..." + token.slice(-4)
-        : "***";
+      const masked = token.length > 12 ? token.slice(0, 8) + '...' + token.slice(-4) : '***';
       checks.push([PASS, `${acct.name}: ${acct.token_env} is set`, masked]);
     } else {
-      checks.push([FAIL, `${acct.name}: ${acct.token_env} is NOT set`, "Add it to .env"]);
+      checks.push([FAIL, `${acct.name}: ${acct.token_env} is NOT set`, 'Add it to .env']);
     }
   }
 

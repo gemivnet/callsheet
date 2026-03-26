@@ -1,92 +1,16 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { createServer } from "node:http";
-import { google } from "googleapis";
-import type { Connector, ConnectorConfig, ConnectorResult, Check, ConnectorAuth } from "../types.js";
-import { PASS, FAIL, WARN, INFO } from "../test-icons.js";
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { google } from 'googleapis';
+import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
+import { PASS, FAIL, WARN, INFO } from '../test-icons.js';
+import {
+  getCredentials,
+  resolveCredsFile,
+  makeAuthFromConfig,
+  type GoogleAccount,
+} from './google-auth.js';
 
-const SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"];
-
-function loadOAuth2(credsDir: string, credsFile = "credentials.json") {
-  const credsPath = join(credsDir, credsFile);
-  if (!existsSync(credsPath))
-    throw new Error(`${credsFile} not found at ${credsPath}`);
-
-  const creds = JSON.parse(readFileSync(credsPath, "utf-8"));
-  const { client_id, client_secret, redirect_uris } =
-    creds.installed ?? creds.web;
-  return new google.auth.OAuth2(
-    client_id,
-    client_secret,
-    redirect_uris?.[0],
-  );
-}
-
-function getCredentials(credsDir: string, tokenFile: string, credsFile?: string) {
-  const tokenPath = join(credsDir, tokenFile);
-  const oauth2 = loadOAuth2(credsDir, credsFile);
-
-  if (existsSync(tokenPath)) {
-    oauth2.setCredentials(JSON.parse(readFileSync(tokenPath, "utf-8")));
-  } else {
-    throw new Error(
-      `No valid Google Calendar credentials at ${tokenPath}. Run: callsheet --auth google_calendar:<account_name>`,
-    );
-  }
-
-  return oauth2;
-}
-
-export async function auth(credsDir: string, accountName?: string, credsFile?: string): Promise<void> {
-  const tokenFile = accountName
-    ? `token_calendar_${accountName.toLowerCase()}.json`
-    : "token_calendar.json";
-  const tokenPath = join(credsDir, tokenFile);
-  const oauth2 = loadOAuth2(credsDir, credsFile);
-
-  // Override redirect for local server
-  (oauth2 as unknown as { redirectUri: string }).redirectUri = "http://localhost:3000/oauth2callback";
-
-  const authUrl = oauth2.generateAuthUrl({
-    access_type: "offline",
-    scope: SCOPES,
-  });
-
-  console.log(
-    accountName
-      ? `Authorizing Google Calendar for "${accountName}"...`
-      : "Authorizing Google Calendar...",
-  );
-  console.log("Visit:", authUrl);
-
-  const server = createServer();
-  const code = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Auth timeout (2 min)")), 120_000);
-    server.on("request", (req, res) => {
-      const url = new URL(req.url!, "http://localhost:3000");
-      const c = url.searchParams.get("code");
-      if (c) {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end("<h1>Auth complete! You can close this tab.</h1>");
-        clearTimeout(timeout);
-        resolve(c);
-      } else {
-        res.writeHead(400);
-        res.end("No code found");
-      }
-    });
-    server.listen(3000);
-  });
-
-  server.close(() => server.unref());
-
-  const { tokens } = await oauth2.getToken(code);
-  oauth2.setCredentials(tokens);
-  mkdirSync(credsDir, { recursive: true });
-  writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
-  console.log(`Google Calendar auth complete. Token saved to ${tokenPath}`);
-  process.exit(0);
-}
+const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
 interface CalendarEvent {
   id: string;
@@ -97,30 +21,20 @@ interface CalendarEvent {
   description?: string;
 }
 
-interface CalendarAccount {
-  name: string;
-  credentials_file?: string;
-  token_file?: string;
+interface CalendarAccount extends GoogleAccount {
   calendar_ids?: string[];
-}
-
-/** Resolve credentials file for an account: account-level > connector-level > default */
-function resolveCredsFile(acct: CalendarAccount | undefined, config: ConnectorConfig): string | undefined {
-  return acct?.credentials_file
-    ?? (config.credentials_file as string | undefined)
-    ?? undefined;
 }
 
 function simplifyEvent(e: CalendarEvent) {
   const start = e.start ?? {};
   const end = e.end ?? {};
   return {
-    summary: e.summary ?? "(no title)",
-    start: start.dateTime ?? start.date ?? "",
-    end: end.dateTime ?? end.date ?? "",
-    location: e.location ?? "",
-    description: (e.description ?? "").slice(0, 200),
-    allDay: "date" in start && !("dateTime" in start),
+    summary: e.summary ?? '(no title)',
+    start: start.dateTime ?? start.date ?? '',
+    end: end.dateTime ?? end.date ?? '',
+    location: e.location ?? '',
+    description: (e.description ?? '').slice(0, 200),
+    allDay: 'date' in start && !('dateTime' in start),
   };
 }
 
@@ -133,7 +47,7 @@ async function fetchAccountEvents(
   credsFile?: string,
 ): Promise<CalendarEvent[]> {
   const oauth2 = getCredentials(credsDir, tokenFile, credsFile);
-  const calendar = google.calendar({ version: "v3", auth: oauth2 });
+  const calendar = google.calendar({ version: 'v3', auth: oauth2 });
 
   const allEvents: CalendarEvent[] = [];
   for (const calId of calendarIds) {
@@ -143,15 +57,11 @@ async function fetchAccountEvents(
         timeMin: startDate.toISOString(),
         timeMax: endDate.toISOString(),
         singleEvents: true,
-        orderBy: "startTime",
+        orderBy: 'startTime',
       });
-      allEvents.push(
-        ...((result.data.items ?? []) as CalendarEvent[]),
-      );
+      allEvents.push(...((result.data.items ?? []) as CalendarEvent[]));
     } catch (e) {
-      console.log(
-        `  Warning: Failed to fetch calendar ${calId}: ${e}`,
-      );
+      console.log(`  Warning: Failed to fetch calendar ${calId}: ${e}`);
     }
   }
 
@@ -160,11 +70,11 @@ async function fetchAccountEvents(
 
 export function create(config: ConnectorConfig): Connector {
   return {
-    name: "google_calendar",
+    name: 'google_calendar',
     description: "Google Calendar — today's schedule and upcoming events",
 
     async fetch(): Promise<ConnectorResult> {
-      const credsDir = (config.credentials_dir as string) ?? "secrets";
+      const credsDir = (config.credentials_dir as string) ?? 'secrets';
       const lookahead = (config.lookahead_days as number) ?? 7;
       const accounts = config.accounts as CalendarAccount[] | undefined;
 
@@ -183,18 +93,24 @@ export function create(config: ConnectorConfig): Connector {
       if (accounts && accounts.length > 0) {
         // Multi-account mode
         for (const acct of accounts) {
-          const tokenFile =
-            acct.token_file ??
-            `token_calendar_${acct.name.toLowerCase()}.json`;
-          const calIds = acct.calendar_ids ?? ["primary"];
+          const tokenFile = acct.token_file ?? `token_calendar_${acct.name.toLowerCase()}.json`;
+          const calIds = acct.calendar_ids ?? ['primary'];
 
           const credsFile = resolveCredsFile(acct, config);
           const todayEvents = await fetchAccountEvents(
-            credsDir, tokenFile, calIds, today, todayEnd,
+            credsDir,
+            tokenFile,
+            calIds,
+            today,
+            todayEnd,
             credsFile,
           );
           const upcomingEvents = await fetchAccountEvents(
-            credsDir, tokenFile, calIds, tomorrow, lookaheadEnd,
+            credsDir,
+            tokenFile,
+            calIds,
+            tomorrow,
+            lookaheadEnd,
             credsFile,
           );
 
@@ -204,14 +120,24 @@ export function create(config: ConnectorConfig): Connector {
       } else {
         // Legacy single-account mode
         const credsFile = config.credentials_file as string | undefined;
-        const tokenFile = "token_calendar.json";
-        const calIds = (config.calendar_ids as string[]) ?? ["primary"];
+        const tokenFile = 'token_calendar.json';
+        const calIds = (config.calendar_ids as string[]) ?? ['primary'];
 
         allTodayEvents = await fetchAccountEvents(
-          credsDir, tokenFile, calIds, today, todayEnd, credsFile,
+          credsDir,
+          tokenFile,
+          calIds,
+          today,
+          todayEnd,
+          credsFile,
         );
         allUpcomingEvents = await fetchAccountEvents(
-          credsDir, tokenFile, calIds, tomorrow, lookaheadEnd, credsFile,
+          credsDir,
+          tokenFile,
+          calIds,
+          tomorrow,
+          lookaheadEnd,
+          credsFile,
         );
       }
 
@@ -225,8 +151,8 @@ export function create(config: ConnectorConfig): Connector {
             return true;
           })
           .sort((a, b) => {
-            const aStart = a.start?.dateTime ?? a.start?.date ?? "";
-            const bStart = b.start?.dateTime ?? b.start?.date ?? "";
+            const aStart = a.start?.dateTime ?? a.start?.date ?? '';
+            const bStart = b.start?.dateTime ?? b.start?.date ?? '';
             return aStart.localeCompare(bStart);
           });
       }
@@ -235,17 +161,17 @@ export function create(config: ConnectorConfig): Connector {
       const upcomingEvents = dedupeAndSort(allUpcomingEvents);
 
       return {
-        source: "google_calendar",
+        source: 'google_calendar',
         description:
           `Google Calendar events. 'today' has ${todayEvents.length} events. ` +
           `'upcoming' has ${upcomingEvents.length} events over the next ${lookahead} days. ` +
           "Use today's events for the schedule section. Use upcoming for the lookahead section — " +
-          "highlight things that need preparation.",
+          'highlight things that need preparation.',
         data: {
           today: todayEvents.map(simplifyEvent),
           upcoming: upcomingEvents.map(simplifyEvent),
         },
-        priorityHint: "high",
+        priorityHint: 'high',
       };
     },
   };
@@ -253,46 +179,50 @@ export function create(config: ConnectorConfig): Connector {
 
 export function validate(config: ConnectorConfig): Check[] {
   const checks: Check[] = [];
-  const credsDir = (config.credentials_dir as string) ?? "secrets";
+  const credsDir = (config.credentials_dir as string) ?? 'secrets';
   const accounts = config.accounts as CalendarAccount[] | undefined;
 
   if (accounts && accounts.length > 0) {
-    checks.push([PASS, `${accounts.length} account(s) configured`, ""]);
+    checks.push([PASS, `${accounts.length} account(s) configured`, '']);
     for (const acct of accounts) {
-      const credsFile = resolveCredsFile(acct, config) ?? "credentials.json";
+      const credsFile = resolveCredsFile(acct, config) ?? 'credentials.json';
       const credsPath = join(credsDir, credsFile);
       checks.push(
         existsSync(credsPath)
-          ? [PASS, `${acct.name}: ${credsFile} found`, ""]
+          ? [PASS, `${acct.name}: ${credsFile} found`, '']
           : [FAIL, `${acct.name}: ${credsFile} NOT found`, credsPath],
       );
       const tokenFile = acct.token_file ?? `token_calendar_${acct.name.toLowerCase()}.json`;
       const tokenPath = join(credsDir, tokenFile);
       if (existsSync(tokenPath)) {
-        checks.push([PASS, `${acct.name}: ${tokenFile} found`, ""]);
+        checks.push([PASS, `${acct.name}: ${tokenFile} found`, '']);
         try {
-          const data = JSON.parse(readFileSync(tokenPath, "utf-8"));
+          const data = JSON.parse(readFileSync(tokenPath, 'utf-8'));
           checks.push(
             data.refresh_token
-              ? [PASS, `${acct.name}: Refresh token present`, ""]
-              : [WARN, `${acct.name}: No refresh token`, "Token may expire"],
+              ? [PASS, `${acct.name}: Refresh token present`, '']
+              : [WARN, `${acct.name}: No refresh token`, 'Token may expire'],
           );
         } catch (e) {
           checks.push([FAIL, `${acct.name}: Token file corrupted`, String(e)]);
         }
       } else {
-        checks.push([FAIL, `${acct.name}: ${tokenFile} NOT found`, `Run: callsheet --auth google_calendar:${acct.name.toLowerCase()}`]);
+        checks.push([
+          FAIL,
+          `${acct.name}: ${tokenFile} NOT found`,
+          `Run: callsheet --auth google_calendar:${acct.name.toLowerCase()}`,
+        ]);
       }
 
-      const calIds = acct.calendar_ids ?? ["primary"];
-      checks.push([INFO, `${acct.name}: ${calIds.length} calendar(s)`, ""]);
-      for (const cid of calIds) checks.push([INFO, `  → ${cid}`, ""]);
+      const calIds = acct.calendar_ids ?? ['primary'];
+      checks.push([INFO, `${acct.name}: ${calIds.length} calendar(s)`, '']);
+      for (const cid of calIds) checks.push([INFO, `  → ${cid}`, '']);
     }
   } else {
     // Legacy single-account validation
-    const credsFileName = (config.credentials_file as string) ?? "credentials.json";
+    const credsFileName = (config.credentials_file as string) ?? 'credentials.json';
     const credsFile = join(credsDir, credsFileName);
-    const tokenFile = join(credsDir, "token_calendar.json");
+    const tokenFile = join(credsDir, 'token_calendar.json');
 
     checks.push(
       existsSync(credsFile)
@@ -301,38 +231,31 @@ export function validate(config: ConnectorConfig): Check[] {
     );
 
     if (existsSync(tokenFile)) {
-      checks.push([PASS, "token_calendar.json found (OAuth complete)", tokenFile]);
+      checks.push([PASS, 'token_calendar.json found (OAuth complete)', tokenFile]);
       try {
-        const data = JSON.parse(readFileSync(tokenFile, "utf-8"));
+        const data = JSON.parse(readFileSync(tokenFile, 'utf-8'));
         checks.push(
           data.refresh_token
-            ? [PASS, "Refresh token present", "Token can auto-renew"]
-            : [WARN, "No refresh token", "Token may expire"],
+            ? [PASS, 'Refresh token present', 'Token can auto-renew']
+            : [WARN, 'No refresh token', 'Token may expire'],
         );
       } catch (e) {
-        checks.push([FAIL, "Token file corrupted", String(e)]);
+        checks.push([FAIL, 'Token file corrupted', String(e)]);
       }
     } else {
-      checks.push([FAIL, "token_calendar.json NOT found", "Run: callsheet --auth google_calendar"]);
+      checks.push([FAIL, 'token_calendar.json NOT found', 'Run: callsheet --auth google_calendar']);
     }
 
     const calIds = (config.calendar_ids as string[]) ?? [];
     if (!calIds.length) {
-      checks.push([FAIL, "No calendar IDs configured", "Add at least 'primary'"]);
+      checks.push([FAIL, 'No calendar IDs configured', "Add at least 'primary'"]);
     } else {
-      checks.push([PASS, `${calIds.length} calendar(s) configured`, ""]);
-      for (const cid of calIds) checks.push([INFO, `  → ${cid}`, ""]);
+      checks.push([PASS, `${calIds.length} calendar(s) configured`, '']);
+      for (const cid of calIds) checks.push([INFO, `  → ${cid}`, '']);
     }
   }
 
   return checks;
 }
 
-export const authFromConfig: ConnectorAuth = async (credsDir, config, accountName) => {
-  const accounts = (config.accounts as CalendarAccount[] | undefined) ?? [];
-  const matchedAcct = accountName
-    ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
-    : undefined;
-  const credsFile = resolveCredsFile(matchedAcct, config);
-  await auth(credsDir, accountName, credsFile);
-};
+export const authFromConfig = makeAuthFromConfig(SCOPES, 'Google Calendar', 'token_calendar');
