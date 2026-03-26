@@ -59,9 +59,16 @@ jobs:
           reporter: jest-junit
           fail-on-error: false
 
+      - name: Upload to Codecov
+        if: steps.tests.outcome == 'success'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Coverage summary
         if: steps.tests.outcome == 'success'
-        id: coverage
         run: |
           node -e "
             const c = require('./coverage/coverage-summary.json').total;
@@ -82,45 +89,5 @@ jobs:
             md += '\n> Coverage target: 70% lines\n';
 
             require('fs').writeFileSync('coverage-summary.md', md);
-            console.log('LINES=' + c.lines.pct);
-          " | while IFS='=' read -r key val; do
-            echo "$key=$val" >> "$GITHUB_OUTPUT"
-          done
-
-      - name: Job summary
-        if: steps.tests.outcome == 'success'
-        run: cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Determine badge color
-        if: steps.tests.outcome == 'success'
-        id: badge
-        run: |
-          PCT="${{ steps.coverage.outputs.LINES }}"
-          COLOR="red"
-          if (( $(echo "$PCT >= 80" | bc -l) )); then
-            COLOR="brightgreen"
-          elif (( $(echo "$PCT >= 50" | bc -l) )); then
-            COLOR="yellow"
-          fi
-          echo "color=$COLOR" >> "$GITHUB_OUTPUT"
-          echo "pct=$PCT" >> "$GITHUB_OUTPUT"
-
-      - name: Update coverage badge
-        if: steps.tests.outcome == 'success'
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        continue-on-error: true
-        with:
-          auth: ${{ secrets.GIST_TOKEN }}
-          gistID: ${{ vars.COVERAGE_GIST_ID }}
-          filename: callsheet-coverage.json
-          label: coverage
-          message: ${{ steps.badge.outputs.pct }}%
-          color: ${{ steps.badge.outputs.color }}
-
-      - name: Upload coverage artifact
-        if: steps.tests.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/lcov-report/
-          retention-days: 14
+          "
+          cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
