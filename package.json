@@ -3,9 +3,8 @@
   "version": "0.1.0",
   "description": "AI-generated daily printed briefs",
   "type": "module",
-  "bin": {
-    "callsheet": "dist/cli.js"
-  },
+  "packageManager": "yarn@4.13.0",
+  "bin": "dist/cli.js",
   "scripts": {
     "build": "tsc",
     "start": "tsx src/cli.ts",
@@ -24,6 +23,8 @@
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
+    "changeset": "changeset",
+    "release": "changeset version",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -48,6 +49,7 @@
     "react": "^19.1.0"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.30.0",
     "@eslint/js": "^10.0.1",
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",

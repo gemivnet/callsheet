@@ -1,0 +1,17 @@
+node_modules
+dist
+coverage
+reports
+output
+secrets
+.env
+.env.*
+.git
+.github
+.changeset
+.husky
+.claude
+test
+PLAN.md
+*.md
+!config.example.yaml
