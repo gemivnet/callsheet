@@ -1,18 +1,8 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import { program } from 'commander';
-import {
-  loadConfig,
-  fetchAll,
-  buildDataPayload,
-  generateBrief,
-  critiqueBrief,
-  saveBrief,
-  saveDataPayload,
-  printPdf,
-} from './core.js';
+import { loadConfig, fetchAll, buildDataPayload, critiqueBrief, runPipeline } from './core.js';
 import { getRegistry } from './connectors/index.js';
-import { renderPdf } from './render.js';
 
 program
   .name('callsheet')
@@ -132,56 +122,15 @@ async function main() {
     return;
   }
 
-  // --- Fetch ---
-  console.log('Fetching data...');
-  const { results, issues: connectorIssues } = await fetchAll(config);
-
-  if (results.length === 0) {
-    console.error('No data fetched. Check your config and connector settings.');
-    process.exit(1);
-  }
-
-  if (connectorIssues.length) {
-    console.log(`  ${connectorIssues.length} connector(s) had issues — will be noted in brief.`);
-  }
-
-  const dataPayload = buildDataPayload(results);
-
+  // --- Show data mode ---
   if (opts.showData) {
-    console.log(dataPayload);
+    const { results } = await fetchAll(config);
+    console.log(buildDataPayload(results));
     return;
   }
 
-  // --- Save raw data ---
-  const outputDir = config.output_dir ?? 'output';
-  const dataPath = saveDataPayload(dataPayload, outputDir);
-  console.log(`  Data: ${dataPath}`);
-
-  // --- Generate ---
-  console.log(`Generating brief via Claude (${config.model ?? 'claude-sonnet-4-20250514'})...`);
-  const brief = await generateBrief(config, dataPayload, connectorIssues);
-
-  const jsonPath = saveBrief(brief, outputDir);
-  console.log(`  JSON: ${jsonPath}`);
-
-  const pdfPath = await renderPdf(brief, outputDir);
-  console.log(`  PDF:  ${pdfPath}`);
-
-  if (opts.preview) {
-    console.log('Preview mode \u2014 not printing.');
-    return;
-  }
-
-  // --- Print ---
-  const printer = config.printer ?? '';
-  if (!printer) {
-    console.log("No printer configured. Use --preview or set 'printer' in config.yaml.");
-    process.exit(1);
-  }
-
-  console.log(`Printing to ${printer}...`);
-  printPdf(pdfPath, printer);
-  console.log('Done.');
+  // --- Generate + save + render + print ---
+  await runPipeline(config, { preview: opts.preview });
 }
 
 main().catch((e) => {
