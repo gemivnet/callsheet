@@ -534,7 +534,7 @@ yarn print
 |-------|---------|
 | `./config.yaml:/app/config.yaml:ro` | Your configuration |
 | `./output:/app/output` | Brief output, memory, usage data, logs |
-| `./credentials:/app/credentials:ro` | OAuth tokens and API credentials |
+| `./secrets:/app/secrets:ro` | OAuth tokens and API credentials |
 
 ### Building
 

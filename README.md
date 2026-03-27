@@ -125,6 +125,7 @@ callsheet/
 │   ├── types.ts                   # Shared TypeScript interfaces
 │   ├── connectors/
 │   │   ├── index.ts               # Registry + loader
+│   │   ├── google-auth.ts
 │   │   ├── google-calendar.ts
 │   │   ├── todoist.ts
 │   │   ├── gmail.ts
