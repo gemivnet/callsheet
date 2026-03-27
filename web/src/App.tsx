@@ -3,6 +3,7 @@ import { Dashboard } from './pages/Dashboard.js';
 import { Briefs } from './pages/Briefs.js';
 import { BriefDetail } from './pages/BriefDetail.js';
 import { Connectors } from './pages/Connectors.js';
+import { ConnectorDetail } from './pages/ConnectorDetail.js';
 import { Memory } from './pages/Memory.js';
 import { Config } from './pages/Config.js';
 import { Logs } from './pages/Logs.js';
@@ -13,6 +14,7 @@ type Page =
   | { name: 'briefs' }
   | { name: 'brief'; date: string }
   | { name: 'connectors' }
+  | { name: 'connector-detail'; connector: string }
   | { name: 'memory' }
   | { name: 'config' }
   | { name: 'logs' }
@@ -70,7 +72,14 @@ function renderPage(page: Page, navigate: (p: Page) => void) {
     case 'brief':
       return <BriefDetail date={page.date} onBack={() => navigate({ name: 'briefs' })} />;
     case 'connectors':
-      return <Connectors />;
+      return <Connectors onNavigate={navigate} />;
+    case 'connector-detail':
+      return (
+        <ConnectorDetail
+          connector={page.connector}
+          onBack={() => navigate({ name: 'connectors' })}
+        />
+      );
     case 'memory':
       return <Memory />;
     case 'config':

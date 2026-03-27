@@ -3,13 +3,31 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import yaml from 'js-yaml';
+import crypto from 'node:crypto';
 import { loadConfig, runPipeline } from './core.js';
 import { getRegistry } from './connectors/index.js';
+import {
+  buildAuthUrl,
+  exchangeCodeAndSave,
+  resolveCredsFile,
+  type GoogleAccount,
+} from './connectors/google-auth.js';
 import { getMonthlyUsageData, getUsageSummary } from './usage.js';
 import { isGenerating } from './scheduler.js';
 import type { CallsheetConfig } from './types.js';
 
 const startedAt = new Date().toISOString();
+
+/** Pending OAuth flows awaiting callback. Entries expire after 5 minutes. */
+const pendingOAuth = new Map<
+  string,
+  {
+    oauth2: ReturnType<typeof buildAuthUrl>['oauth2'];
+    tokenPath: string;
+    connectorName: string;
+    createdAt: number;
+  }
+>();
 
 function getOutputDir(config?: CallsheetConfig): string {
   return config?.output_dir ?? process.env.OUTPUT_DIR ?? 'output';
@@ -177,6 +195,141 @@ export function createApp(): express.Express {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       res.status(500).json({ error: message });
+    }
+  });
+
+  app.get('/api/connectors/:name', (req, res) => {
+    try {
+      const config = loadConfig(getConfigPath());
+      const registry = getRegistry();
+      const entry = registry.get(req.params.name);
+
+      if (!entry) {
+        res.status(404).json({ error: `Unknown connector: ${req.params.name}` });
+        return;
+      }
+
+      const connConfig = config.connectors?.[req.params.name] ?? {};
+      const checks = entry.validate ? entry.validate(connConfig) : [];
+
+      // Redact sensitive config values
+      const safeConfig: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(connConfig)) {
+        if (/secret|token|password|key/i.test(key) && typeof val === 'string') {
+          safeConfig[key] = '•••••';
+        } else {
+          safeConfig[key] = val;
+        }
+      }
+
+      // Extract account names if present
+      const accounts = Array.isArray(connConfig.accounts)
+        ? (connConfig.accounts as GoogleAccount[]).map((a) => a.name)
+        : null;
+
+      res.json({
+        name: req.params.name,
+        enabled: connConfig?.enabled !== false && connConfig !== undefined,
+        has_auth: !!entry.auth,
+        has_validate: !!entry.validate,
+        config: safeConfig,
+        checks: checks.map(([icon, msg, detail]) => ({ icon, message: msg, detail })),
+        accounts,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post('/api/connectors/:name/auth', (req, res) => {
+    try {
+      const config = loadConfig(getConfigPath());
+      const registry = getRegistry();
+      const entry = registry.get(req.params.name);
+
+      if (!entry?.authScopes || !entry.authTokenPrefix) {
+        res.status(400).json({ error: `Connector ${req.params.name} does not support web auth` });
+        return;
+      }
+
+      const connConfig = config.connectors?.[req.params.name] ?? {};
+      const credsDir = (connConfig.credentials_dir as string) ?? 'secrets';
+      const accountName = (req.body as { account?: string }).account;
+
+      // Resolve credentials file for this account
+      const accounts = (connConfig.accounts as GoogleAccount[] | undefined) ?? [];
+      const matchedAcct = accountName
+        ? accounts.find((a) => a.name.toLowerCase() === accountName.toLowerCase())
+        : undefined;
+      const credsFile = resolveCredsFile(matchedAcct, connConfig);
+
+      const tokenFile = accountName
+        ? `${entry.authTokenPrefix}_${accountName.toLowerCase()}.json`
+        : `${entry.authTokenPrefix}.json`;
+
+      // Clean up expired pending auths (> 5 min)
+      const now = Date.now();
+      for (const [key, val] of pendingOAuth) {
+        if (now - val.createdAt > 300_000) pendingOAuth.delete(key);
+      }
+
+      const state = crypto.randomUUID();
+      const { authUrl, oauth2, tokenPath } = buildAuthUrl(
+        credsDir,
+        entry.authScopes,
+        tokenFile,
+        'http://localhost:3000/oauth2callback',
+        credsFile,
+      );
+
+      pendingOAuth.set(state, {
+        oauth2,
+        tokenPath,
+        connectorName: req.params.name,
+        createdAt: now,
+      });
+
+      // Append state to the auth URL
+      const url = new URL(authUrl);
+      url.searchParams.set('state', state);
+
+      res.json({ auth_url: url.toString() });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get('/oauth2callback', async (req, res) => {
+    const code = req.query.code as string | undefined;
+    const state = req.query.state as string | undefined;
+
+    if (!code || !state) {
+      res.status(400).send('Missing code or state parameter.');
+      return;
+    }
+
+    const pending = pendingOAuth.get(state);
+    if (!pending) {
+      res.status(400).send('Unknown or expired auth session.');
+      return;
+    }
+
+    try {
+      await exchangeCodeAndSave(pending.oauth2, code, pending.tokenPath);
+      pendingOAuth.delete(state);
+      res.send(
+        '<html><body style="font-family:system-ui;text-align:center;padding:3rem">' +
+          '<h2>Authorization complete!</h2>' +
+          '<p>You can close this window and return to the dashboard.</p>' +
+          '<script>window.close()</script>' +
+          '</body></html>',
+      );
+    } catch (e) {
+      pendingOAuth.delete(state);
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).send(`Auth failed: ${message}`);
     }
   });
 

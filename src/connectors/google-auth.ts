@@ -28,6 +28,40 @@ export function getCredentials(credsDir: string, tokenFile: string, credsFile?: 
   return oauth2;
 }
 
+/** Build an OAuth URL without starting a server. Used by the web dashboard. */
+export function buildAuthUrl(
+  credsDir: string,
+  scopes: string[],
+  tokenFile: string,
+  redirectUri = 'http://localhost:3000/oauth2callback',
+  credsFile?: string,
+): { authUrl: string; oauth2: ReturnType<typeof loadOAuth2>; tokenPath: string } {
+  const tokenPath = join(credsDir, tokenFile);
+  const oauth2 = loadOAuth2(credsDir, credsFile);
+
+  (oauth2 as unknown as { redirectUri: string }).redirectUri = redirectUri;
+
+  const authUrl = oauth2.generateAuthUrl({
+    access_type: 'offline',
+    scope: scopes,
+  });
+
+  return { authUrl, oauth2, tokenPath };
+}
+
+/** Exchange an OAuth code for tokens and save to disk. */
+export async function exchangeCodeAndSave(
+  oauth2: ReturnType<typeof loadOAuth2>,
+  code: string,
+  tokenPath: string,
+): Promise<void> {
+  const { tokens } = await oauth2.getToken(code);
+  oauth2.setCredentials(tokens);
+  mkdirSync(join(tokenPath, '..'), { recursive: true });
+  writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
+}
+
+/** CLI OAuth flow — starts a temporary local server, opens browser, waits for callback. */
 export async function runOAuthFlow(
   credsDir: string,
   scopes: string[],
@@ -36,16 +70,13 @@ export async function runOAuthFlow(
   accountName?: string,
   credsFile?: string,
 ): Promise<void> {
-  const tokenPath = join(credsDir, tokenFile);
-  const oauth2 = loadOAuth2(credsDir, credsFile);
-
-  (oauth2 as unknown as { redirectUri: string }).redirectUri =
-    'http://localhost:3000/oauth2callback';
-
-  const authUrl = oauth2.generateAuthUrl({
-    access_type: 'offline',
-    scope: scopes,
-  });
+  const { authUrl, oauth2, tokenPath } = buildAuthUrl(
+    credsDir,
+    scopes,
+    tokenFile,
+    'http://localhost:3000/oauth2callback',
+    credsFile,
+  );
 
   console.log(
     accountName ? `Authorizing ${label} for "${accountName}"...` : `Authorizing ${label}...`,
@@ -73,10 +104,7 @@ export async function runOAuthFlow(
 
   server.close(() => server.unref());
 
-  const { tokens } = await oauth2.getToken(code);
-  oauth2.setCredentials(tokens);
-  mkdirSync(credsDir, { recursive: true });
-  writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
+  await exchangeCodeAndSave(oauth2, code, tokenPath);
   console.log(`${label} auth complete. Token saved to ${tokenPath}`);
   process.exit(0);
 }
