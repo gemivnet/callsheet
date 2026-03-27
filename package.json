@@ -1,6 +1,6 @@
 {
   "name": "callsheet",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI-generated daily printed briefs",
   "type": "module",
   "packageManager": "yarn@4.13.0",
