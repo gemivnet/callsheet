@@ -1819,6 +1819,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/node-cron@npm:^3.0.11":
+  version: 3.0.11
+  resolution: "@types/node-cron@npm:3.0.11"
+  checksum: 10c0/21cd0255988da2935bc8bf010da8b31624911ec10ef5d9a96a59c57193f60b27c1749b2e27c2a292a697d00195da5b8848a707345bb276abc39c96287ee82005
+  languageName: node
+  linkType: hard
+
 "@types/node-fetch@npm:^2.6.4":
   version: 2.6.13
   resolution: "@types/node-fetch@npm:2.6.13"
@@ -2704,6 +2711,7 @@ __metadata:
     "@types/jest": "npm:^30.0.0"
     "@types/js-yaml": "npm:^4.0.9"
     "@types/node": "npm:^22.15.3"
+    "@types/node-cron": "npm:^3.0.11"
     "@types/react": "npm:^19.1.2"
     commander: "npm:^13.1.0"
     dotenv: "npm:^16.5.0"
@@ -2717,6 +2725,7 @@ __metadata:
     jest-junit: "npm:^16.0.0"
     js-yaml: "npm:^4.1.0"
     lint-staged: "npm:^16.4.0"
+    node-cron: "npm:^4.2.1"
     prettier: "npm:^3.8.1"
     react: "npm:^19.1.0"
     ts-jest: "npm:^29.4.6"
@@ -5556,6 +5565,13 @@ __metadata:
   dependencies:
     semver: "npm:^7.3.5"
   checksum: 10c0/73abbee70833fbf91c7a0bb52bef9f1ccde190b1597f0bf8f15226b3aef8a4ade78605488fbd0aa47ec4fefe20e748672ba045c9075c58a56416bde8d9097586
+  languageName: node
+  linkType: hard
+
+"node-cron@npm:^4.2.1":
+  version: 4.2.1
+  resolution: "node-cron@npm:4.2.1"
+  checksum: 10c0/804df01df230e96fd2f8ffcde004f4d5af953bccdf3ccf993dc450526dd65f553a2f2ad4bc0faf55c90c38cbc99c9ddbb88ee16cba3fc6bc74e606da6efb249e
   languageName: node
   linkType: hard
 
