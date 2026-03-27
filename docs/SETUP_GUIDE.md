@@ -6,31 +6,61 @@ A complete guide to setting up Callsheet — from first install to daily automat
 
 ## Deployment methods
 
-Callsheet supports four ways to run. Pick the one that fits your setup.
+Callsheet supports six ways to run. Pick the one that fits your setup.
 
-| Feature | CLI | Local Dashboard | Docker Headless | Docker Headed |
-|---------|:---:|:---------------:|:---------------:|:-------------:|
-| One-off brief generation | Yes | Yes | - | Yes |
-| Scheduled generation (cron) | Manual | Manual | Built-in | Built-in |
-| Web dashboard | - | Yes | - | Yes |
-| View/download briefs in browser | - | Yes | - | Yes |
-| Connector testing + OAuth from UI | - | Yes | - | Yes |
-| Usage/cost tracking dashboard | - | Yes | - | Yes |
-| Print to CUPS printer | Yes | - | Yes | Yes |
-| No Docker required | Yes | Yes | - | - |
-| Container isolation | - | - | Yes | Yes |
-| **Best for** | Quick test | Development | Headless server | Full setup |
+| Method | Run Local | Manual Cron | setup.sh | Dashboard | Docker Headless | Docker Headed |
+|--------|:---------:|:-----------:|:--------:|:---------:|:---------------:|:-------------:|
+| **Command** | `yarn preview` | `crontab -e` | `bash setup.sh` | `yarn dashboard` | `docker compose up` | `docker compose -f ... up` |
+| One-off generation | Yes | - | - | Yes | - | Yes |
+| Scheduled generation | - | Yes | Yes | - | Built-in | Built-in |
+| Web dashboard | - | - | - | Yes | - | Yes |
+| Connector testing from UI | - | - | - | Yes | - | Yes |
+| OAuth from browser | - | - | - | Yes | - | Yes |
+| Usage/cost tracking | - | - | - | Yes | - | Yes |
+| Print to CUPS | Yes | Yes | Yes | - | Yes | Yes |
+| Guided setup | - | - | Yes | - | - | - |
+| No Docker required | Yes | Yes | Yes | Yes | - | - |
+| Container isolation | - | - | - | - | Yes | Yes |
+| **Best for** | Quick test | Simple server | First-time setup | Development | Headless server | Full setup |
 
-### CLI (simplest)
+### Run local (simplest)
 
-Run briefs on-demand from the terminal. No server, no Docker. Schedule with system cron.
+Run a single brief from the terminal. No server, no scheduler, no Docker.
 
 ```bash
 yarn preview          # Generate PDF, don't print
 yarn print            # Generate + print
 ```
 
-### Local dashboard
+### Manual cron
+
+Same as run local, but scheduled with system cron. Build once, then add a cron job:
+
+```bash
+yarn build
+crontab -e
+```
+
+```
+30 6 * * * cd /path/to/callsheet && /usr/bin/node dist/cli.js >> output/cron.log 2>&1
+```
+
+Runs at 6:30 AM daily. Use absolute paths — cron doesn't have your shell's PATH.
+
+### setup.sh (guided)
+
+An interactive script that walks through dependencies, API keys, connectors, OAuth, printer discovery, and cron scheduling in one command.
+
+> **Review before running.** Read through [`setup.sh`](../setup.sh) first to understand what it does.
+
+```bash
+less setup.sh     # Review first
+bash setup.sh     # Then run
+```
+
+**Flags:** `--headless` (non-interactive), `--skip-deps` (skip system packages), `--skip-print` (skip printer setup).
+
+### Dashboard (local development)
 
 Builds the React SPA and starts Express on port 3000. Good for development and testing connectors.
 
@@ -469,36 +499,7 @@ This fetches all data, sends it to Claude, generates a PDF, and saves it to `out
 
 ---
 
-## Step 8: Set up scheduling
-
-### CLI + system cron
-
-Build for production, then add a cron job:
-
-```bash
-yarn build
-crontab -e
-```
-
-```
-30 6 * * * cd /path/to/callsheet && /usr/bin/node dist/cli.js >> output/cron.log 2>&1
-```
-
-This runs at 6:30 AM daily. Use absolute paths — cron doesn't have your shell's PATH.
-
-### Docker (built-in scheduler)
-
-The Docker modes use node-cron. Configure in `docker-compose.yml`:
-
-```yaml
-environment:
-  CRON_SCHEDULE: "30 6 * * *"   # 6:30 AM daily
-  TZ: America/Chicago            # Your timezone
-```
-
----
-
-## Step 9: Set up your printer (optional)
+## Step 8: Set up your printer (optional)
 
 Find your CUPS printer name:
 
@@ -517,21 +518,6 @@ Test a full print run:
 ```bash
 yarn print
 ```
-
----
-
-## Interactive setup script
-
-If you prefer a guided experience, the interactive setup script walks through everything above automatically.
-
-> **Review before running.** Read through [`setup.sh`](../setup.sh) first to understand what it does.
-
-```bash
-less setup.sh     # Review first
-bash setup.sh     # Then run
-```
-
-**Flags:** `--headless` (non-interactive), `--skip-deps` (skip system packages), `--skip-print` (skip printer setup).
 
 ---
 
