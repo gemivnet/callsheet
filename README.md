@@ -292,4 +292,4 @@ Some ideas: Slack, GitHub, Fitbit, Anki, Radarr/Sonarr, Notion, CalDAV, garbage/
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE) — free to use, modify, and distribute, but derivative works (including network use) must remain open source.
