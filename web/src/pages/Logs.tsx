@@ -11,8 +11,11 @@ export function Logs() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Logs</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <div>
+          <h2 style={{ marginBottom: '0.25rem' }}>Logs</h2>
+          <p className="page-description">Output from scheduled generation runs.</p>
+        </div>
         <button className="btn btn-secondary" onClick={refetch}>Refresh</button>
       </div>
 

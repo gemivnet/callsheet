@@ -17,13 +17,17 @@ export function Memory() {
 
   return (
     <div>
-      <h2>Memory</h2>
-      <p className="muted">Insights extracted from each brief for continuity across days.</p>
+      <div className="page-header">
+        <h2>Memory</h2>
+        <p className="page-description">Insights extracted from each brief for continuity across days.</p>
+      </div>
 
       {loading && <p className="muted">Loading...</p>}
 
       {data && data.memories.length === 0 && (
-        <p className="muted">No memories yet. Generate a brief first.</p>
+        <div className="empty-state">
+          <p>No memories yet. Generate a brief first.</p>
+        </div>
       )}
 
       {data?.memories.map((mem) => (

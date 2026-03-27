@@ -41,8 +41,10 @@ export function Config() {
 
   return (
     <div>
-      <h2>Config</h2>
-      <p className="muted">Edit your config.yaml (shown as JSON). Changes are saved back as YAML.</p>
+      <div className="page-header">
+        <h2>Config</h2>
+        <p className="page-description">Edit your config.yaml (shown as JSON). Changes are saved back as YAML.</p>
+      </div>
 
       {loading && <p className="muted">Loading...</p>}
 

@@ -16,7 +16,10 @@ export function Usage() {
 
   return (
     <div>
-      <h2>Usage</h2>
+      <div className="page-header">
+        <h2>Usage</h2>
+        <p className="page-description">API cost tracking for the current month.</p>
+      </div>
 
       {loading && <p className="muted">Loading...</p>}
 

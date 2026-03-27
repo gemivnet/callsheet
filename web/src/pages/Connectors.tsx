@@ -28,10 +28,10 @@ export function Connectors({ onNavigate }: Props) {
 
   return (
     <div>
-      <h2>Connectors</h2>
-      <p className="muted" style={{ marginBottom: '1rem' }}>
-        Data sources that feed into your daily brief.
-      </p>
+      <div className="page-header">
+        <h2>Connectors</h2>
+        <p className="page-description">Data sources that feed into your daily brief.</p>
+      </div>
 
       {loading && <p className="muted">Loading...</p>}
 
