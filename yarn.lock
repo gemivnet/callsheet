@@ -2840,7 +2840,7 @@ __metadata:
     "@types/node-cron": "npm:^3.0.11"
     "@types/react": "npm:^19.1.2"
     "@types/react-dom": "npm:^19.2.3"
-    commander: "npm:^13.1.0"
+    commander: "npm:^14.0.3"
     dotenv: "npm:^16.5.0"
     esbuild: "npm:^0.27.4"
     eslint: "npm:^10.1.0"
@@ -3038,13 +3038,6 @@ __metadata:
   dependencies:
     delayed-stream: "npm:~1.0.0"
   checksum: 10c0/0dbb829577e1b1e839fa82b40c07ffaf7de8a09b935cadd355a73652ae70a88b4320db322f6634a4ad93424292fa80973ac6480986247f1734a1137debf271d5
-  languageName: node
-  linkType: hard
-
-"commander@npm:^13.1.0":
-  version: 13.1.0
-  resolution: "commander@npm:13.1.0"
-  checksum: 10c0/7b8c5544bba704fbe84b7cab2e043df8586d5c114a4c5b607f83ae5060708940ed0b5bd5838cf8ce27539cde265c1cbd59ce3c8c6b017ed3eec8943e3a415164
   languageName: node
   linkType: hard
 
