@@ -53,131 +53,9 @@ Sections adapt to the day. Quiet Tuesday? Half-page brief. Packed Thursday befor
 
 **Brief diff:** Yesterday's brief is summarized as context so Claude highlights what's new or changed.
 
-## Quick start
+## Getting started
 
-> **First time?** The [Setup Guide](docs/SETUP_GUIDE.md) is a detailed walkthrough with connector-by-connector instructions, output analysis tips, cost breakdowns, and troubleshooting.
-
-### Option A: Interactive setup script
-
-An interactive script walks you through everything — dependencies, API keys, connectors, printer, and scheduling.
-
-> **Important:** Always review shell scripts before running them. We are not responsible for any issues caused by running this script. Read through [`setup.sh`](setup.sh) first to understand what it will do on your system.
-
-```bash
-git clone https://github.com/gemivnet/callsheet.git
-cd callsheet
-
-# Review the script first!
-less setup.sh
-
-# Then run it
-bash setup.sh
-```
-
-Flags: `--headless` (non-interactive), `--skip-deps` (skip system packages), `--skip-print` (skip printer setup). See `bash setup.sh --help`.
-
-### Option B: Manual setup
-
-#### 1. Clone and install
-
-```bash
-git clone https://github.com/gemivnet/callsheet.git
-cd callsheet
-yarn install
-```
-
-No system dependencies needed — PDF rendering uses `@react-pdf/renderer` (pure JS, no Chromium, no WeasyPrint).
-
-#### 2. Configure
-
-```bash
-cp config.example.yaml config.yaml
-cp .env.example .env
-```
-
-Edit `.env` with your API keys. Edit `config.yaml` to enable connectors and add household context.
-
-#### 3. Set up Google APIs (if using Calendar or Gmail)
-
-1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
-2. Enable **Google Calendar API** (and **Gmail API** if using email)
-3. Create **OAuth 2.0 Client ID** (Desktop application type)
-4. Download credentials and save as `secrets/credentials.json`
-
-```bash
-yarn auth:gcal
-yarn auth:gmail
-```
-
-#### 4. Test your connectors
-
-```bash
-# Test all enabled connectors
-yarn test
-
-# Test specific ones
-yarn tsx src/cli.ts --test todoist weather
-
-# See full raw data
-yarn data
-```
-
-The test tool shows you exactly what data each connector returns, how many items, estimated token cost, and a preview of the data structure — without making a Claude API call.
-
-#### 5. Generate a brief
-
-```bash
-# Preview (saves PDF, doesn't print)
-yarn preview
-
-# Full run (generates + prints)
-yarn print
-```
-
-Or build once and run compiled:
-
-```bash
-yarn build
-node dist/cli.js --preview
-```
-
-#### 6. Schedule with cron
-
-```bash
-crontab -e
-```
-
-```
-30 6 * * * cd /path/to/callsheet && /usr/bin/node dist/cli.js >> output/cron.log 2>&1
-```
-
-### Option C: Docker (headless)
-
-Runs on a schedule with no UI. Briefs are saved to the `output/` volume.
-
-```bash
-docker compose up -d
-```
-
-### Option D: Docker with dashboard
-
-Adds a web dashboard on port 3000 for viewing briefs, testing connectors, and triggering generation manually.
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.headed.yml up -d
-```
-
-Open `http://localhost:3000` to access the dashboard.
-
-### Local dashboard (development)
-
-Run the dashboard locally without Docker:
-
-```bash
-yarn dashboard
-```
-
-This builds the React SPA and starts the Express server on port 3000.
+See the **[Getting Started Guide](docs/SETUP_GUIDE.md)** for full setup instructions covering all deployment methods, connector configuration, and troubleshooting.
 
 ## Connectors
 
@@ -197,27 +75,6 @@ Connectors are pluggable data sources. Enable them in `config.yaml`, test with `
 ### Writing your own
 
 Create a file in `src/connectors/`, export a `create` factory function, and register it in `src/connectors/index.ts`. See [docs/CONNECTORS.md](docs/CONNECTORS.md).
-
-```typescript
-import type { Connector, ConnectorConfig, ConnectorResult } from "../types.js";
-
-export function create(config: ConnectorConfig): Connector {
-  return {
-    name: "my_source",
-    description: "My Source — one liner",
-
-    async fetch(): Promise<ConnectorResult> {
-      const data = await getMyData();
-      return {
-        source: "my_source",
-        description: "Tell Claude what this data is and what to look for.",
-        data: { items: data },
-        priorityHint: "normal",
-      };
-    },
-  };
-}
-```
 
 ## Customization
 
@@ -268,7 +125,6 @@ callsheet/
 │   ├── types.ts                   # Shared TypeScript interfaces
 │   ├── connectors/
 │   │   ├── index.ts               # Registry + loader
-│   │   ├── base.ts                # Type re-exports
 │   │   ├── google-calendar.ts
 │   │   ├── todoist.ts
 │   │   ├── gmail.ts
@@ -298,15 +154,6 @@ callsheet/
 ├── .gitignore
 └── README.md
 ```
-
-### Deployment modes
-
-| Mode | How to run | What it does |
-|------|-----------|-------------|
-| **Local CLI** | `yarn preview` / `yarn print` | One-off generation, no server |
-| **Headless Docker** | `docker compose up` | Cron-scheduled generation, no UI |
-| **Headed Docker** | `docker compose -f docker-compose.yml -f docker-compose.headed.yml up` | Cron + web dashboard on port 3000 |
-| **Local dashboard** | `yarn dashboard` | Dev mode: Express + React SPA on port 3000 |
 
 ## Cost
 
