@@ -1,0 +1,6 @@
+services:
+  callsheet:
+    environment:
+      MODE: headed_docker
+    ports:
+      - "3000:3000"

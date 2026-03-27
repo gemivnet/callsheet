@@ -1,0 +1,14 @@
+services:
+  callsheet:
+    build: .
+    container_name: callsheet
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MODE: headless_docker
+      CRON_SCHEDULE: "30 6 * * *"
+      TZ: America/Chicago
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./output:/app/output
+      - ./credentials:/app/credentials:ro
