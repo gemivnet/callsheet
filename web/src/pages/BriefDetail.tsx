@@ -32,9 +32,11 @@ export function BriefDetail({ date, onBack }: Props) {
 
   return (
     <div>
-      <button className="btn btn-secondary" onClick={onBack} style={{ marginBottom: '1rem' }}>
-        &larr; Back to Briefs
-      </button>
+      <div style={{ marginBottom: '1.5rem' }}>
+        <button className="link-button" onClick={onBack}>
+          &larr; Back to Briefs
+        </button>
+      </div>
 
       {loading && <p className="muted">Loading...</p>}
       {error && <p className="error">Error: {error}</p>}

@@ -17,12 +17,17 @@ export function Briefs({ onNavigate }: Props) {
 
   return (
     <div>
-      <h2>Briefs</h2>
+      <div className="page-header">
+        <h2>Briefs</h2>
+        <p className="page-description">History of generated daily briefs.</p>
+      </div>
 
       {loading && <p className="muted">Loading...</p>}
 
       {data && data.briefs.length === 0 && (
-        <p className="muted">No briefs generated yet.</p>
+        <div className="empty-state">
+          <p>No briefs generated yet. Go to Dashboard to generate your first brief.</p>
+        </div>
       )}
 
       {data && data.briefs.length > 0 && (

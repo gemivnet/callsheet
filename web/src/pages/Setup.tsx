@@ -287,8 +287,7 @@ export function Setup({ onComplete }: Props) {
           </p>
           <input
             type="password"
-            className="config-editor"
-            style={{ height: 'auto', padding: '0.625rem 0.75rem', resize: 'none' }}
+            className="input"
             placeholder="sk-ant-api03-..."
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
@@ -401,13 +400,7 @@ export function Setup({ onComplete }: Props) {
                         </label>
                         <input
                           type={field.type ?? 'text'}
-                          className="config-editor"
-                          style={{
-                            height: 'auto',
-                            padding: '0.5rem 0.625rem',
-                            resize: 'none',
-                            fontSize: '0.8rem',
-                          }}
+                          className="input"
                           placeholder={field.placeholder}
                           value={connectorFields[conn.key]?.[field.key] ?? ''}
                           onChange={(e) => setField(conn.key, field.key, e.target.value)}
