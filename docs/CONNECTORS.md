@@ -39,8 +39,20 @@ Then register it in `src/connectors/index.ts`:
 import { create as createMySource } from "./my-source.js";
 
 // Add to the registry map:
-["my_source", createMySource],
+["my_source", { factory: createMySource }],
 ```
+
+If your connector has a config validator (recommended), export a `validate` function too:
+
+```typescript
+export function validate(config: ConnectorConfig): Check[] {
+  const checks: Check[] = [];
+  checks.push(config.some_field ? ['✅', 'Field set', ''] : ['❌', 'Field missing', 'Add some_field to config']);
+  return checks;
+}
+```
+
+Then register it as `{ factory: createMySource, validate: validateMySource }`.
 
 And add a config block in `config.yaml`:
 
@@ -84,8 +96,8 @@ If your connector needs Google OAuth:
 
 1. Reuse the same `credentials.json` — one Google Cloud project can have multiple scopes.
 2. Store your token as `token_<name>.json` in the secrets dir.
-3. Export an `auth()` function so users can run `callsheet --auth your_connector`.
-4. Update `cli.ts`'s auth handler to include your connector.
+3. Export an `authFromConfig()` function so users can run `callsheet --auth your_connector`.
+4. Register it in `index.ts` with `auth`, `authScopes`, `authTokenPrefix`, and `authLabel` fields — this enables both CLI and web dashboard OAuth flows.
 5. Add the required scope to your connector — tokens are per-scope.
 
 See `google-calendar.ts` and `gmail.ts` for reference implementations.
