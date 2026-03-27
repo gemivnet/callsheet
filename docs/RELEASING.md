@@ -10,8 +10,8 @@ There are two types of releases:
 
 | Type | When | Docker Tag | GitHub Release |
 |------|------|------------|----------------|
-| **Preview** | Every commit to `main` | `0.1.0-preview.abc1234` | No |
-| **Stable** | After `yarn release` + push | `0.2.0` + `latest` | Yes |
+| **Preview** | Every commit to `main` | `1.0.0-preview.abc1234` | No |
+| **Stable** | After `yarn release` + push | `1.1.0` + `latest` | Yes |
 
 ## How It Works
 
@@ -119,9 +119,9 @@ All images are published to `ghcr.io/gemivnet/callsheet`.
 | Tag | Description |
 |-----|-------------|
 | `latest` | Most recent stable release |
-| `0.2.0` | Specific stable version |
+| `1.1.0` | Specific stable version |
 | `preview` | Most recent preview build (overwritten each commit) |
-| `0.1.0-preview.abc1234` | Specific preview build (immutable) |
+| `1.0.0-preview.abc1234` | Specific preview build (immutable) |
 
 ### Pulling images
 
@@ -130,7 +130,7 @@ All images are published to `ghcr.io/gemivnet/callsheet`.
 docker pull ghcr.io/gemivnet/callsheet:latest
 
 # Specific version
-docker pull ghcr.io/gemivnet/callsheet:0.2.0
+docker pull ghcr.io/gemivnet/callsheet:1.1.0
 
 # Latest preview
 docker pull ghcr.io/gemivnet/callsheet:preview

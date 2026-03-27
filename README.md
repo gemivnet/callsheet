@@ -143,8 +143,11 @@ callsheet/
 │       ├── App.tsx                # SPA shell with sidebar nav
 │       ├── pages/                 # Dashboard, Briefs, Connectors, etc.
 │       └── styles.css
+├── test/                           # Jest tests (mirrors src/)
 ├── docs/
-│   └── CONNECTORS.md              # How to write connectors
+│   ├── CONNECTORS.md              # How to write connectors
+│   ├── RELEASING.md               # Release pipeline + versioning
+│   └── SETUP_GUIDE.md             # Full getting started guide
 ├── docker-compose.yml             # Headless mode (cron only)
 ├── docker-compose.headed.yml      # Override: adds dashboard on port 3000
 ├── Dockerfile
