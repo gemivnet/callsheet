@@ -26,13 +26,13 @@ Built for ADHD households, busy couples, and anyone who's tired of context-switc
 ## How it works
 
 ```
-cron (6:30 AM)
+cron (6:30 AM) or web dashboard trigger
   → callsheet
     → connectors fetch data (calendar, tasks, email, weather, ...)
     → Claude reads everything, decides what matters
     → outputs structured JSON brief
     → @react-pdf/renderer renders to PDF
-    → CUPS sends to your printer
+    → CUPS sends to your printer (or view in dashboard)
 ```
 
 **Claude is the analyst.** It doesn't format your data into a template — it makes judgment calls. Flight lesson on the calendar + TAF showing ceiling dropping to 1200 at lesson time = *"Ceiling forecast MVFR at 9 AM — confirm with your CFI."* Billing email from Tello yesterday + no renewal task = *"Renew Tello today before auto-suspend."* Fourteen items building up in someone's inbox = *"Process inbox tonight?"* Unremarkable weather on a day with no outdoor plans? Not mentioned.
@@ -151,6 +151,34 @@ crontab -e
 30 6 * * * cd /path/to/callsheet && /usr/bin/node dist/cli.js >> output/cron.log 2>&1
 ```
 
+### Option C: Docker (headless)
+
+Runs on a schedule with no UI. Briefs are saved to the `output/` volume.
+
+```bash
+docker compose up -d
+```
+
+### Option D: Docker with dashboard
+
+Adds a web dashboard on port 3000 for viewing briefs, testing connectors, and triggering generation manually.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.headed.yml up -d
+```
+
+Open `http://localhost:3000` to access the dashboard.
+
+### Local dashboard (development)
+
+Run the dashboard locally without Docker:
+
+```bash
+yarn dashboard
+```
+
+This builds the React SPA and starts the Express server on port 3000.
+
 ## Connectors
 
 Connectors are pluggable data sources. Enable them in `config.yaml`, test with `--test`.
@@ -231,6 +259,10 @@ callsheet/
 ├── src/
 │   ├── cli.ts                     # CLI entry point
 │   ├── core.ts                    # Orchestrator: fetch → Claude → PDF → print
+│   ├── server.ts                  # Express API server
+│   ├── scheduler.ts               # node-cron wrapper for Docker modes
+│   ├── entrypoint.ts              # Docker MODE dispatcher
+│   ├── usage.ts                   # API cost tracking
 │   ├── render.tsx                 # React PDF components + styling
 │   ├── test-connectors.ts        # Connector test runner
 │   ├── types.ts                   # Shared TypeScript interfaces
@@ -247,8 +279,18 @@ callsheet/
 │   │   └── actual-budget.ts
 │   └── prompts/
 │       └── system.md              # Claude's instructions (tune this!)
+├── web/
+│   ├── build.mjs                  # esbuild bundler
+│   ├── public/index.html
+│   └── src/
+│       ├── App.tsx                # SPA shell with sidebar nav
+│       ├── pages/                 # Dashboard, Briefs, Connectors, etc.
+│       └── styles.css
 ├── docs/
 │   └── CONNECTORS.md              # How to write connectors
+├── docker-compose.yml             # Headless mode (cron only)
+├── docker-compose.headed.yml      # Override: adds dashboard on port 3000
+├── Dockerfile
 ├── config.example.yaml
 ├── package.json
 ├── tsconfig.json
@@ -256,6 +298,15 @@ callsheet/
 ├── .gitignore
 └── README.md
 ```
+
+### Deployment modes
+
+| Mode | How to run | What it does |
+|------|-----------|-------------|
+| **Local CLI** | `yarn preview` / `yarn print` | One-off generation, no server |
+| **Headless Docker** | `docker compose up` | Cron-scheduled generation, no UI |
+| **Headed Docker** | `docker compose -f docker-compose.yml -f docker-compose.headed.yml up` | Cron + web dashboard on port 3000 |
+| **Local dashboard** | `yarn dashboard` | Dev mode: Express + React SPA on port 3000 |
 
 ## Cost
 
