@@ -13,6 +13,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import yaml from 'js-yaml';
 import type { CallsheetConfig, ConnectorResult, Brief, AutoCloseRecommendation } from './types.js';
 import { loadConnectors } from './connectors/index.js';
+import { renderPdf } from './render.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -20,9 +21,9 @@ export function loadConfig(configPath: string): CallsheetConfig {
   try {
     return yaml.load(readFileSync(configPath, 'utf-8')) as CallsheetConfig;
   } catch {
-    console.error(`ERROR: Config not found: ${configPath}`);
-    console.error('Copy config.example.yaml to config.yaml and edit it.');
-    process.exit(1);
+    throw new Error(
+      `Config not found: ${configPath}. Copy config.example.yaml to config.yaml and edit it.`,
+    );
   }
 }
 
@@ -544,8 +545,7 @@ function loadPrompt(config: CallsheetConfig): string {
   try {
     prompt = readFileSync(promptPath, 'utf-8');
   } catch {
-    console.error(`ERROR: System prompt not found: ${promptPath}`);
-    process.exit(1);
+    throw new Error(`System prompt not found: ${promptPath}`);
   }
 
   const context = config.context ?? {};
@@ -588,8 +588,7 @@ export async function generateBrief(
 ): Promise<Brief> {
   const apiKey = process.env.ANTHROPIC_API_KEY ?? '';
   if (!apiKey) {
-    console.error('ERROR: ANTHROPIC_API_KEY not set.');
-    process.exit(1);
+    throw new Error('ANTHROPIC_API_KEY not set.');
   }
 
   const client = new Anthropic({ apiKey });
@@ -689,4 +688,63 @@ export function saveBrief(brief: Brief, outputDir: string): string {
 
 export function printPdf(pdfPath: string, printer: string): void {
   execSync(`lp -d "${printer}" "${pdfPath}"`, { stdio: 'inherit' });
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline — reusable generation flow for CLI, scheduler, and web API
+// ---------------------------------------------------------------------------
+
+export interface PipelineResult {
+  brief: Brief;
+  jsonPath: string;
+  pdfPath: string;
+  dataPath: string;
+}
+
+export async function runPipeline(
+  config: CallsheetConfig,
+  options: { preview?: boolean } = {},
+): Promise<PipelineResult> {
+  // Fetch
+  console.log('Fetching data...');
+  const { results, issues: connectorIssues } = await fetchAll(config);
+
+  if (results.length === 0) {
+    throw new Error('No data fetched. Check your config and connector settings.');
+  }
+
+  if (connectorIssues.length) {
+    console.log(`  ${connectorIssues.length} connector(s) had issues — will be noted in brief.`);
+  }
+
+  const dataPayload = buildDataPayload(results);
+
+  // Save raw data
+  const outputDir = config.output_dir ?? 'output';
+  const dataPath = saveDataPayload(dataPayload, outputDir);
+  console.log(`  Data: ${dataPath}`);
+
+  // Generate
+  console.log(`Generating brief via Claude (${config.model ?? 'claude-sonnet-4-20250514'})...`);
+  const brief = await generateBrief(config, dataPayload, connectorIssues);
+
+  const jsonPath = saveBrief(brief, outputDir);
+  console.log(`  JSON: ${jsonPath}`);
+
+  const pdfPath = await renderPdf(brief, outputDir);
+  console.log(`  PDF:  ${pdfPath}`);
+
+  // Print (unless preview mode)
+  if (!options.preview) {
+    const printer = config.printer ?? '';
+    if (printer) {
+      console.log(`Printing to ${printer}...`);
+      printPdf(pdfPath, printer);
+      console.log('Done.');
+    } else {
+      console.log("No printer configured. Set 'printer' in config.yaml to enable printing.");
+    }
+  }
+
+  return { brief, jsonPath, pdfPath, dataPath };
 }
