@@ -33,6 +33,12 @@ export interface ConnectorEntry {
   factory: ConnectorFactory;
   validate?: ConnectorValidator;
   auth?: ConnectorAuth;
+  /** OAuth scopes for connectors that support web-based auth. */
+  authScopes?: string[];
+  /** Token filename prefix (e.g. 'token_calendar'). */
+  authTokenPrefix?: string;
+  /** Human-readable label for auth flow. */
+  authLabel?: string;
 }
 
 const registry = new Map<string, ConnectorEntry>([
@@ -40,9 +46,26 @@ const registry = new Map<string, ConnectorEntry>([
   ['todoist', { factory: createTodoist, validate: validateTodoist }],
   [
     'google_calendar',
-    { factory: createGoogleCalendar, validate: validateGoogleCalendar, auth: authGoogleCalendar },
+    {
+      factory: createGoogleCalendar,
+      validate: validateGoogleCalendar,
+      auth: authGoogleCalendar,
+      authScopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+      authTokenPrefix: 'token_calendar',
+      authLabel: 'Google Calendar',
+    },
   ],
-  ['gmail', { factory: createGmail, validate: validateGmail, auth: authGmail }],
+  [
+    'gmail',
+    {
+      factory: createGmail,
+      validate: validateGmail,
+      auth: authGmail,
+      authScopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+      authTokenPrefix: 'token_gmail',
+      authLabel: 'Gmail',
+    },
+  ],
   ['aviation_weather', { factory: createAviationWeather, validate: validateAviationWeather }],
   ['market', { factory: createMarket, validate: validateMarket }],
   ['home_assistant', { factory: createHomeAssistant, validate: validateHomeAssistant }],

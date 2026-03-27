@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useFetch } from '../hooks.js';
 
 interface ConnectorInfo {
@@ -8,72 +8,65 @@ interface ConnectorInfo {
   has_validate: boolean;
 }
 
-interface CheckResult {
-  icon: string;
-  message: string;
-  detail: string;
+const LABELS: Record<string, string> = {
+  weather: 'Weather',
+  todoist: 'Todoist',
+  google_calendar: 'Google Calendar',
+  gmail: 'Gmail',
+  aviation_weather: 'Aviation Weather',
+  market: 'Market',
+  home_assistant: 'Home Assistant',
+  actual_budget: 'Actual Budget',
+};
+
+interface Props {
+  onNavigate: (page: { name: 'connector-detail'; connector: string }) => void;
 }
 
-export function Connectors() {
+export function Connectors({ onNavigate }: Props) {
   const { data, loading } = useFetch<{ connectors: ConnectorInfo[] }>('/api/connectors');
-  const [testing, setTesting] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, CheckResult[]>>({});
-
-  const handleTest = async (name: string) => {
-    setTesting(name);
-    try {
-      const res = await fetch(`/api/connectors/${name}/test`, { method: 'POST' });
-      const data = await res.json();
-      setResults((prev) => ({ ...prev, [name]: data.checks ?? [] }));
-    } catch {
-      setResults((prev) => ({ ...prev, [name]: [{ icon: '✗', message: 'Test failed', detail: '' }] }));
-    } finally {
-      setTesting(null);
-    }
-  };
 
   return (
     <div>
       <h2>Connectors</h2>
+      <p className="muted" style={{ marginBottom: '1rem' }}>
+        Data sources that feed into your daily brief.
+      </p>
 
       {loading && <p className="muted">Loading...</p>}
 
-      <div className="card-grid">
-        {data?.connectors.map((conn) => (
-          <div key={conn.name} className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="card-label">{conn.name}</div>
-              <span className={`badge ${conn.enabled ? 'badge-green' : 'badge-gray'}`}>
-                {conn.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
-            <div className="card-meta" style={{ marginTop: '0.5rem' }}>
-              {conn.has_auth && 'OAuth'} {conn.has_validate && '• Validatable'}
-            </div>
-            {conn.has_validate && (
+      {data && (
+        <div className="card">
+          <div className="list">
+            {data.connectors.map((conn) => (
               <button
-                className="btn btn-secondary"
-                style={{ marginTop: '0.75rem' }}
-                onClick={() => handleTest(conn.name)}
-                disabled={testing === conn.name}
+                key={conn.name}
+                className="list-item"
+                onClick={() =>
+                  onNavigate({ name: 'connector-detail', connector: conn.name })
+                }
               >
-                {testing === conn.name ? 'Testing...' : 'Test'}
-              </button>
-            )}
-            {results[conn.name] && (
-              <div className="test-results">
-                {results[conn.name].map((check, i) => (
-                  <div key={i} className="test-check">
-                    <span>{check.icon}</span>
-                    <span>{check.message}</span>
-                    {check.detail && <span className="muted"> — {check.detail}</span>}
+                <div>
+                  <div className="list-title">{LABELS[conn.name] ?? conn.name}</div>
+                  <div className="list-subtitle">
+                    {conn.has_auth && 'OAuth'}
+                    {conn.has_auth && conn.has_validate && ' · '}
+                    {conn.has_validate && 'Validatable'}
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span
+                    className={`badge ${conn.enabled ? 'badge-green' : 'badge-gray'}`}
+                  >
+                    {conn.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                  <span className="muted">›</span>
+                </div>
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
