@@ -8,20 +8,14 @@ A complete guide to setting up Callsheet — from first install to daily automat
 
 Callsheet supports six ways to run. Pick the one that fits your setup.
 
-| Method | Run Local | Manual Cron | setup.sh | Dashboard | Docker Headless | Docker Headed |
-|--------|:---------:|:-----------:|:--------:|:---------:|:---------------:|:-------------:|
-| **Command** | `yarn preview` | `crontab -e` | `bash setup.sh` | `yarn dashboard` | `docker compose up` | `docker compose -f ... up` |
-| One-off generation | Yes | - | - | Yes | - | Yes |
-| Scheduled generation | - | Yes | Yes | - | Built-in | Built-in |
-| Web dashboard | - | - | - | Yes | - | Yes |
-| Connector testing from UI | - | - | - | Yes | - | Yes |
-| OAuth from browser | - | - | - | Yes | - | Yes |
-| Usage/cost tracking | - | - | - | Yes | - | Yes |
-| Print to CUPS | Yes | Yes | Yes | - | Yes | Yes |
-| Guided setup | - | - | Yes | - | - | - |
-| No Docker required | Yes | Yes | Yes | Yes | - | - |
-| Container isolation | - | - | - | - | Yes | Yes |
-| **Best for** | Quick test | Simple server | First-time setup | Development | Headless server | Full setup |
+| Method | Command | One-off | Scheduled | Dashboard | OAuth UI | Print | Docker | Best for |
+|--------|---------|:-------:|:---------:|:---------:|:--------:|:-----:|:------:|----------|
+| **Run local** | `yarn preview` | Yes | - | - | - | Yes | - | Quick test |
+| **Manual cron** | `crontab -e` | - | Yes | - | - | Yes | - | Simple server |
+| **setup.sh** | `bash setup.sh` | - | Yes | - | - | Yes | - | First-time setup |
+| **Dashboard** | `yarn dashboard` | Yes | - | Yes | Yes | - | - | Development |
+| **Docker headless** | `docker compose up` | - | Built-in | - | - | Yes | Yes | Headless server |
+| **Docker headed** | `docker compose -f ... up` | Yes | Built-in | Yes | Yes | Yes | Yes | Full setup |
 
 ### Run local (simplest)
 
