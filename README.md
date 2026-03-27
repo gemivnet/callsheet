@@ -83,7 +83,7 @@ Flags: `--headless` (non-interactive), `--skip-deps` (skip system packages), `--
 ```bash
 git clone https://github.com/gemivnet/callsheet.git
 cd callsheet
-npm install
+yarn install
 ```
 
 No system dependencies needed — PDF rendering uses `@react-pdf/renderer` (pure JS, no Chromium, no WeasyPrint).
@@ -105,21 +105,21 @@ Edit `.env` with your API keys. Edit `config.yaml` to enable connectors and add 
 4. Download credentials and save as `secrets/credentials.json`
 
 ```bash
-npm run auth:gcal
-npm run auth:gmail
+yarn auth:gcal
+yarn auth:gmail
 ```
 
 #### 4. Test your connectors
 
 ```bash
 # Test all enabled connectors
-npm test
+yarn test
 
 # Test specific ones
-npx tsx src/cli.ts --test todoist weather
+yarn tsx src/cli.ts --test todoist weather
 
 # See full raw data
-npm run data
+yarn data
 ```
 
 The test tool shows you exactly what data each connector returns, how many items, estimated token cost, and a preview of the data structure — without making a Claude API call.
@@ -128,16 +128,16 @@ The test tool shows you exactly what data each connector returns, how many items
 
 ```bash
 # Preview (saves PDF, doesn't print)
-npm run preview
+yarn preview
 
 # Full run (generates + prints)
-npm run print
+yarn print
 ```
 
 Or build once and run compiled:
 
 ```bash
-npm run build
+yarn build
 node dist/cli.js --preview
 ```
 
