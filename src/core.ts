@@ -14,6 +14,7 @@ import yaml from 'js-yaml';
 import type { CallsheetConfig, ConnectorResult, Brief, AutoCloseRecommendation } from './types.js';
 import { loadConnectors } from './connectors/index.js';
 import { renderPdf } from './render.js';
+import { logUsage } from './usage.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -140,6 +141,7 @@ async function generateMemoryInsights(
   client: Anthropic,
   model: string,
   dataPayload: string,
+  outputDir: string,
 ): Promise<string[]> {
   try {
     const response = await client.messages.create({
@@ -170,6 +172,8 @@ async function generateMemoryInsights(
       ],
     });
 
+    logUsage(outputDir, model, 'memory', response.usage.input_tokens, response.usage.output_tokens);
+
     let text = (response.content[0] as { type: 'text'; text: string }).text.trim();
     // Strip code fences (```json ... ``` or ``` ... ```)
     const fenceMatch = /```(?:json)?\s*\n([\s\S]*?)\n\s*```/.exec(text);
@@ -193,7 +197,7 @@ export async function saveMemory(
   mkdirSync(memDir, { recursive: true });
 
   const today = new Date().toISOString().slice(0, 10);
-  const insights = await generateMemoryInsights(client, model, dataPayload);
+  const insights = await generateMemoryInsights(client, model, dataPayload, outputDir);
 
   if (insights.length) {
     const memory: DailyMemory = { date: today, insights };
@@ -316,6 +320,14 @@ export async function critiqueBrief(
       ],
     });
 
+    logUsage(
+      outputDir,
+      'claude-haiku-4-5-20251001',
+      'critique',
+      response.usage.input_tokens,
+      response.usage.output_tokens,
+    );
+
     let text = (response.content[0] as { type: 'text'; text: string }).text.trim();
     const fenceMatch = /```(?:json)?\s*\n([\s\S]*?)\n\s*```/.exec(text);
     if (fenceMatch) text = fenceMatch[1].trim();
@@ -406,6 +418,7 @@ function buildDiffContext(prev: { brief: Brief; label: string }): string {
 async function detectResolvableTasks(
   client: Anthropic,
   dataPayload: string,
+  outputDir: string,
 ): Promise<AutoCloseRecommendation[]> {
   try {
     const response = await client.messages.create({
@@ -427,6 +440,14 @@ async function detectResolvableTasks(
         },
       ],
     });
+
+    logUsage(
+      outputDir,
+      'claude-haiku-4-5-20251001',
+      'auto_close',
+      response.usage.input_tokens,
+      response.usage.output_tokens,
+    );
 
     let text = (response.content[0] as { type: 'text'; text: string }).text.trim();
     const fenceMatch = /```(?:json)?\s*\n([\s\S]*?)\n\s*```/.exec(text);
@@ -626,6 +647,8 @@ export async function generateBrief(
     ],
   });
 
+  logUsage(outputDir, model, 'brief', response.usage.input_tokens, response.usage.output_tokens);
+
   let { text } = response.content[0] as { type: 'text'; text: string };
 
   // Strip code fences if present
@@ -652,7 +675,7 @@ export async function generateBrief(
   // Auto-close: optionally close Todoist tasks proven resolved by other data sources
   if (config.auto_close_tasks) {
     console.log('  Checking for auto-closable tasks...');
-    const recommendations = await detectResolvableTasks(client, dataPayload);
+    const recommendations = await detectResolvableTasks(client, dataPayload, outputDir);
     if (recommendations.length) {
       console.log(`  Found ${recommendations.length} task(s) to auto-close:`);
       const closed = await closeTodoistTasks(recommendations, config);
