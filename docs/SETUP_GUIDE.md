@@ -1,69 +1,102 @@
-# Setup Guide
+# Getting Started
 
-A step-by-step walkthrough for getting Callsheet running from scratch. Assumes you're comfortable with a terminal but haven't necessarily set up API keys or OAuth flows before.
+A complete guide to setting up Callsheet — from first install to daily automated briefs.
 
 ---
 
-## Interactive setup (recommended)
+## Deployment methods
 
-If you'd prefer a guided experience, there's an interactive setup script that walks you through everything below — dependencies, API keys, connector configuration, OAuth, printer discovery, and scheduling — in a single command.
+Callsheet supports four ways to run. Pick the one that fits your setup.
 
-> **Review before running.** As with any script you download from the internet, you should read through it before executing it. We provide this script as a convenience and are not liable for any issues it may cause on your system. It installs system packages (Node.js, optionally CUPS), writes to your `.env` and `config.yaml` files, and can set up cron jobs.
+| Feature | CLI | Local Dashboard | Docker Headless | Docker Headed |
+|---------|:---:|:---------------:|:---------------:|:-------------:|
+| One-off brief generation | Yes | Yes | - | Yes |
+| Scheduled generation (cron) | Manual | Manual | Built-in | Built-in |
+| Web dashboard | - | Yes | - | Yes |
+| View/download briefs in browser | - | Yes | - | Yes |
+| Connector testing + OAuth from UI | - | Yes | - | Yes |
+| Usage/cost tracking dashboard | - | Yes | - | Yes |
+| Print to CUPS printer | Yes | - | Yes | Yes |
+| No Docker required | Yes | Yes | - | - |
+| Container isolation | - | - | Yes | Yes |
+| **Best for** | Quick test | Development | Headless server | Full setup |
+
+### CLI (simplest)
+
+Run briefs on-demand from the terminal. No server, no Docker. Schedule with system cron.
 
 ```bash
-# Read the script first
-less setup.sh
-
-# Run it
-bash setup.sh
+yarn preview          # Generate PDF, don't print
+yarn print            # Generate + print
 ```
 
-**Flags:**
+### Local dashboard
 
-| Flag | Effect |
-|------|--------|
-| `--headless` | Non-interactive mode — uses defaults, skips all prompts |
-| `--skip-deps` | Skip system dependency installation (Node.js, CUPS) |
-| `--skip-print` | Skip printer setup entirely |
-| `--help` | Show usage |
+Builds the React SPA and starts Express on port 3000. Good for development and testing connectors.
 
-The script logs everything to `setup.log` in the project root. If something goes wrong, check that file for details.
+```bash
+yarn dashboard        # Build web + start server
+```
 
-If you'd rather do things manually, or want to understand each step, continue with the guide below.
+Open `http://localhost:3000`. You can view briefs, test connectors, trigger generation, manage config, and run Google OAuth flows from the browser.
+
+### Docker headless
+
+Runs the scheduler in a container with no UI. Generates briefs on a cron schedule.
+
+```bash
+docker compose up -d
+```
+
+Configure schedule and timezone via environment variables in `docker-compose.yml`.
+
+### Docker headed
+
+Everything in Docker headless, plus the web dashboard on port 3000.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.headed.yml up -d
+```
+
+Open `http://localhost:3000` to access the dashboard.
 
 ---
 
-## Manual setup
+## Prerequisites
 
-### Prerequisites
-
-- **Node.js 20+** — check with `node --version`. Install via [nvm](https://github.com/nvm-sh/nvm) or [nodejs.org](https://nodejs.org).
-- **A printer** (optional) — any CUPS-compatible printer works. You can use `--preview` mode without one.
+- **Node.js 20+** — check with `node --version`. Install via [nvm](https://github.com/nvm-sh/nvm) or [nodejs.org](https://nodejs.org). (Not needed for Docker methods.)
+- **Yarn** — this project uses Yarn 4 (Berry). Corepack handles this: `corepack enable`. (Not needed for Docker methods.)
+- **Docker** — only for Docker methods. Install from [docker.com](https://docker.com).
+- **A printer** (optional) — any CUPS-compatible printer. You can use `--preview` mode or the dashboard without one.
 - **An Anthropic API key** — sign up at [console.anthropic.com](https://console.anthropic.com) and add credits ($5 is enough for months of daily briefs).
 
-### Step 1: Clone and install
+---
+
+## Step 1: Clone and install
 
 ```bash
 git clone https://github.com/gemivnet/callsheet.git
 cd callsheet
-npm install
+yarn install
 ```
 
-### Step 2: Create your config files
+No system dependencies needed — PDF rendering uses `@react-pdf/renderer` (pure JS, no Chromium, no WeasyPrint).
+
+**Docker users:** Skip `yarn install`. The Dockerfile handles dependencies.
+
+## Step 2: Create your config files
 
 ```bash
 cp config.example.yaml config.yaml
 cp .env.example .env
 ```
 
-You now have two files to edit:
-
 | File | What goes here |
 |------|---------------|
 | `.env` | Secrets: API keys, tokens. Never committed to git. |
 | `config.yaml` | Everything else: which connectors are on, household context, printer name. |
 
-### Step 3: Add your Anthropic API key
+## Step 3: Add your Anthropic API key
 
 Open `.env` and paste your key:
 
@@ -87,11 +120,13 @@ model: claude-opus-4-6
 
 Start with Sonnet. Switch to Opus after you've dialed in your connectors and context — the quality difference is noticeable in the Executive Brief section, where Claude connects dots across data sources.
 
-### Step 4: Enable connectors
+---
 
-Start simple. You don't need all seven connectors on day one. Pick 1-2 to start:
+## Step 4: Enable connectors
 
-#### Suggested starting order
+Start simple. You don't need all connectors on day one. Pick 1-2 to start.
+
+### Suggested starting order
 
 1. **Weather** — zero auth, instant gratification
 2. **Todoist** — quick API token, shows tasks immediately
@@ -102,11 +137,13 @@ Start simple. You don't need all seven connectors on day one. Pick 1-2 to start:
 7. **Home Assistant** — if you run HA
 8. **Aviation Weather** — if you fly
 
+---
+
 ### Weather (no auth required)
 
 The fastest way to verify the system works end-to-end.
 
-1. Find your coordinates (search "lat lon" + your city, or use Google Maps → right-click → copy coordinates).
+1. Find your coordinates (search "lat lon" + your city, or use Google Maps > right-click > copy coordinates).
 2. Edit `config.yaml`:
 
 ```yaml
@@ -121,16 +158,16 @@ connectors:
 3. Test it:
 
 ```bash
-npx tsx src/cli.ts --test weather
+yarn tsx src/cli.ts --test weather
 ```
 
-You should see a green checkmark for Fetch, plus a data tree showing temperature, wind, and forecast periods. If this works, your setup is correct.
+You should see a green checkmark for Fetch, plus a data tree showing temperature, wind, and forecast periods.
 
 > **Note:** The NWS API only covers US locations. For international weather, you'd need to write a connector using a different API (OpenWeatherMap, etc.).
 
 ### Todoist
 
-1. Go to [Todoist Settings → Integrations → Developer](https://todoist.com/app/settings/integrations/developer) and copy your API token.
+1. Go to [Todoist Settings > Integrations > Developer](https://todoist.com/app/settings/integrations/developer) and copy your API token.
 2. Add it to `.env`:
 
 ```
@@ -161,10 +198,8 @@ For multi-person households, add more accounts with separate tokens:
 4. Test:
 
 ```bash
-npx tsx src/cli.ts --test todoist
+yarn tsx src/cli.ts --test todoist
 ```
-
-The output shows tasks grouped by `today` (due today + overdue), `inbox` (unprocessed items), `upcoming` (next 7 days), and `backlog` (no due date, across all projects).
 
 ### Google Calendar
 
@@ -174,26 +209,27 @@ This requires a one-time OAuth setup. It takes about 5 minutes.
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com).
 2. Create a new project (or use an existing one).
-3. Go to **APIs & Services → Library**, search for **Google Calendar API**, and enable it.
-4. Go to **APIs & Services → Credentials → Create Credentials → OAuth Client ID**.
+3. Go to **APIs & Services > Library**, search for **Google Calendar API**, and enable it.
+4. Go to **APIs & Services > Credentials > Create Credentials > OAuth Client ID**.
 5. Application type: **Desktop app**. Name it whatever you want.
 6. Download the JSON file and save it as `secrets/credentials.json`:
 
 ```bash
 mkdir -p secrets
-# Move your downloaded file:
 mv ~/Downloads/client_secret_*.json secrets/credentials.json
 ```
 
 **Run the auth flow:**
 
+From the CLI:
+
 ```bash
-npx tsx src/cli.ts --auth google_calendar
+yarn auth:gcal
 ```
 
-This opens a browser window. Sign in, grant calendar read access, and the token is saved automatically to `secrets/token_calendar.json`.
+Or from the dashboard: Navigate to **Connectors > Google Calendar > Authorize**. The OAuth flow opens in a popup window.
 
-> **"This app isn't verified" warning:** This is normal for personal projects. Click "Advanced" → "Go to (your app name)" to continue. Google shows this for any OAuth app that hasn't gone through their review process.
+> **"This app isn't verified" warning:** This is normal for personal projects. Click "Advanced" > "Go to (your app name)" to continue.
 
 **Configure which calendars to pull:**
 
@@ -207,34 +243,22 @@ connectors:
     lookahead_days: 7
 ```
 
-`primary` is your main calendar. To add shared or subscribed calendars, you need their calendar IDs. The easiest way to find them:
-
-- **Google Calendar web** → Settings → click the calendar → "Integrate calendar" → Calendar ID
-- Or check what's available in your account by looking at your Google Calendar settings
-
-Common calendar IDs:
-- `primary` — your main calendar
-- `en.usa#holiday@group.v.calendar.google.com` — US holidays
-- Shared calendars look like `c_abc123@group.calendar.google.com`
-
-Test:
-
-```bash
-npx tsx src/cli.ts --test google_calendar
-```
+`primary` is your main calendar. To add shared or subscribed calendars, find their IDs in Google Calendar web > Settings > click the calendar > "Integrate calendar" > Calendar ID.
 
 ### Gmail
 
 Uses the same Google Cloud project as Calendar.
 
-1. In [Google Cloud Console](https://console.cloud.google.com), go to **APIs & Services → Library**, search for **Gmail API**, and enable it.
+1. In [Google Cloud Console](https://console.cloud.google.com), go to **APIs & Services > Library**, search for **Gmail API**, and enable it.
 2. You don't need new credentials — the same `secrets/credentials.json` works.
 
 **Run the auth flow:**
 
 ```bash
-npx tsx src/cli.ts --auth gmail
+yarn auth:gmail
 ```
+
+Or use the dashboard: **Connectors > Gmail > Authorize**.
 
 **Configure:**
 
@@ -247,7 +271,7 @@ connectors:
     max_messages: 25
 ```
 
-The `query` field uses [Gmail search syntax](https://support.google.com/mail/answer/7190). The default filters out promotions and social tabs and only looks at the last 2 days.
+The `query` field uses [Gmail search syntax](https://support.google.com/mail/answer/7190).
 
 **Useful query patterns:**
 
@@ -275,15 +299,13 @@ connectors:
       - VTI      # Same as VTSAX but ETF
 ```
 
-Add whatever tickers matter to you. Claude only mentions market data if there's a notable move (>2% weekly change by default), so this is low-noise. Each ticker also pulls recent news headlines — Claude will surface anything significant.
+Add whatever tickers matter to you. Claude only mentions market data if there's a notable move (>2% weekly change by default). Each ticker also pulls recent news headlines.
 
 ### Actual Budget
 
-For self-hosted [Actual Budget](https://actualbudget.org/) users. Pulls recent transactions, spending by category, and flags categories that are over or on pace to exceed their monthly budget.
+For self-hosted [Actual Budget](https://actualbudget.org/) users. Pulls recent transactions, spending by category, and flags categories over budget.
 
-**Important:** Actual Budget uses an NPM package (`@actual-app/api`), not a REST API. It's already included as a dependency.
-
-1. Find your **Sync ID** in Actual Budget: Settings → Show advanced settings → Sync ID.
+1. Find your **Sync ID** in Actual Budget: Settings > Show advanced settings > Sync ID.
 2. Add your server password to `.env`:
 
 ```
@@ -308,19 +330,11 @@ If you use end-to-end encryption, also add:
     budget_password_env: ACTUAL_BUDGET_E2E_PASSWORD
 ```
 
-4. Test:
-
-```bash
-npx tsx src/cli.ts --test actual_budget
-```
-
-The output shows recent transactions, spending by category, and any **budget alerts** — categories where spending has exceeded the monthly budget or is on pace to exceed it. Claude surfaces these in the Executive Brief when they're significant.
-
 ### Home Assistant
 
 Requires a long-lived access token from your HA instance.
 
-1. In Home Assistant: Profile → Security → Long-Lived Access Tokens → Create Token.
+1. In Home Assistant: Profile > Security > Long-Lived Access Tokens > Create Token.
 2. Add to `.env`:
 
 ```
@@ -338,7 +352,7 @@ connectors:
     entities: []    # empty = scan all sensors
 ```
 
-With `entities: []`, the connector pulls all sensor states. This can produce a large payload (~18K tokens if you have hundreds of devices). To reduce it, list specific entities:
+With `entities: []`, the connector pulls all sensor states. This can produce a large payload (~18K tokens). To reduce it, list specific entities:
 
 ```yaml
     entities:
@@ -347,8 +361,6 @@ With `entities: []`, the connector pulls all sensor states. This can produce a l
       - sensor.indoor_temperature
       - sensor.washer_status
 ```
-
-**Tip:** Run `--test home_assistant` and look at the "Token estimate" section. If it says "Very large payload", consider filtering to specific entities.
 
 ### Aviation Weather
 
@@ -363,11 +375,13 @@ connectors:
       - KBJC    # Rocky Mountain Metro
 ```
 
-Use [ICAO airport codes](https://www.world-airport-codes.com/). Pick your home airport and training airports.
+Use [ICAO airport codes](https://www.world-airport-codes.com/).
 
-### Step 5: Add household context
+---
 
-The `context` block in `config.yaml` is what makes Callsheet genuinely useful instead of just a formatted data dump. This gets injected into Claude's prompt so it can make connections.
+## Step 5: Add household context
+
+The `context` block in `config.yaml` is what makes Callsheet genuinely useful. This gets injected into Claude's prompt so it can make connections.
 
 ```yaml
 context:
@@ -389,35 +403,31 @@ context:
     reminders when under 7 days.
 ```
 
-**What to include:**
+**What to include:** Names, ages, roles, work schedules, health/accessibility needs, key dates with absolute dates, recurring patterns, preferences.
 
-- Names, ages, roles — helps Claude personalize
-- Work schedules — "In Office" calendar events get flagged as commute days
-- Health/accessibility needs — ADHD, medication reminders, etc.
-- Key dates with absolute dates — Claude calculates countdowns automatically
-- Recurring patterns — "Tello bills monthly, needs manual renewal next day"
-- Preferences — "Skip market unless weekly swing > 3%"
+**What not to include:** Anything that changes daily (connectors handle that), passwords (use `.env`), excessively long text (counts toward input tokens).
 
-**What not to include:**
+---
 
-- Anything that changes daily (that's what connectors are for)
-- Passwords or tokens (use `.env`)
-- Excessively long text (this counts toward input tokens)
+## Step 6: Test everything
 
-### Step 6: Test everything
-
-Run the full diagnostic:
+**From the CLI:**
 
 ```bash
-npx tsx src/cli.ts --test
+# Test all enabled connectors
+yarn tsx src/cli.ts --test
+
+# Test specific connectors
+yarn tsx src/cli.ts --test weather todoist
+
+# See the exact JSON payload Claude will receive
+yarn tsx src/cli.ts --show-data
+
+# List all registered connectors
+yarn tsx src/cli.ts --list-connectors
 ```
 
-This tests every enabled connector and shows:
-- Whether config and credentials are valid
-- Whether each API responds
-- What data comes back (with a tree view)
-- Token estimates per connector and overall
-- Estimated cost per brief
+**From the dashboard:** Navigate to any connector's detail page to see live validation checks, config summary, and auth status.
 
 **What to look for:**
 
@@ -428,36 +438,28 @@ This tests every enabled connector and shows:
 | "Very large payload" warning | Consider trimming that connector's data |
 | Total input tokens | Your cost driver. Under 10K is good. Over 20K, trim something. |
 
-**Other useful commands:**
+---
+
+## Step 7: Generate your first brief
+
+**CLI:**
 
 ```bash
-# Test specific connectors only
-npx tsx src/cli.ts --test weather todoist
-
-# See the exact JSON payload Claude will receive
-npx tsx src/cli.ts --show-data
-
-# List all registered connectors
-npx tsx src/cli.ts --list-connectors
+yarn preview
 ```
 
-### Step 7: Generate your first brief
+**Dashboard:** Click "Generate Now" on the Dashboard page, then view the result in the Briefs section.
 
-```bash
-npx tsx src/cli.ts --preview
-```
-
-This fetches all data, sends it to Claude, generates a PDF, and saves it to `output/` without printing. Open the PDF and review it.
+This fetches all data, sends it to Claude, generates a PDF, and saves it to `output/`. Review the PDF.
 
 **Things to check on the first brief:**
 
 - Are the right sections showing up?
-- Is Claude making useful observations in the Executive Brief section?
+- Is Claude making useful observations in the Executive Brief?
 - Are tasks attributed to the right person?
-- Is anything missing that should be there?
-- Is anything showing up that's noise?
+- Is anything missing or noisy?
 
-If something's off, the three tuning points are:
+**Tuning points:**
 
 | What to change | Where |
 |---|---|
@@ -465,7 +467,38 @@ If something's off, the three tuning points are:
 | How Claude interprets data | Connector `description` field in source code |
 | What Claude generates | `src/prompts/system.md` |
 
-### Step 8: Set up your printer
+---
+
+## Step 8: Set up scheduling
+
+### CLI + system cron
+
+Build for production, then add a cron job:
+
+```bash
+yarn build
+crontab -e
+```
+
+```
+30 6 * * * cd /path/to/callsheet && /usr/bin/node dist/cli.js >> output/cron.log 2>&1
+```
+
+This runs at 6:30 AM daily. Use absolute paths — cron doesn't have your shell's PATH.
+
+### Docker (built-in scheduler)
+
+The Docker modes use node-cron. Configure in `docker-compose.yml`:
+
+```yaml
+environment:
+  CRON_SCHEDULE: "30 6 * * *"   # 6:30 AM daily
+  TZ: America/Chicago            # Your timezone
+```
+
+---
+
+## Step 9: Set up your printer (optional)
 
 Find your CUPS printer name:
 
@@ -473,7 +506,7 @@ Find your CUPS printer name:
 lpstat -p -d
 ```
 
-This lists all printers. The name is the first field (e.g., `Brother_MFC_L8900CDW_series`). Add it to `config.yaml`:
+Add it to `config.yaml`:
 
 ```yaml
 printer: "Brother_MFC_L8900CDW_series"
@@ -482,39 +515,57 @@ printer: "Brother_MFC_L8900CDW_series"
 Test a full print run:
 
 ```bash
-npx tsx src/cli.ts
+yarn print
 ```
 
-### Step 9: Schedule with cron
+---
 
-Build for production:
+## Interactive setup script
+
+If you prefer a guided experience, the interactive setup script walks through everything above automatically.
+
+> **Review before running.** Read through [`setup.sh`](../setup.sh) first to understand what it does.
 
 ```bash
-npm run build
+less setup.sh     # Review first
+bash setup.sh     # Then run
 ```
 
-Set up a daily cron job:
+**Flags:** `--headless` (non-interactive), `--skip-deps` (skip system packages), `--skip-print` (skip printer setup).
+
+---
+
+## Docker reference
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MODE` | `headless_docker` | `headless_docker` or `headed_docker` |
+| `CRON_SCHEDULE` | `30 6 * * *` | Cron expression for brief generation |
+| `TZ` | `America/Chicago` | Timezone for scheduling |
+| `CONFIG_PATH` | `config.yaml` | Path to config file inside container |
+| `OUTPUT_DIR` | `output` | Path to output directory inside container |
+| `PORT` | `3000` | Dashboard port (headed mode only) |
+
+### Volumes
+
+| Mount | Purpose |
+|-------|---------|
+| `./config.yaml:/app/config.yaml:ro` | Your configuration |
+| `./output:/app/output` | Brief output, memory, usage data, logs |
+| `./credentials:/app/credentials:ro` | OAuth tokens and API credentials |
+
+### Building
 
 ```bash
-crontab -e
+docker compose build                  # Headless
+docker compose -f docker-compose.yml -f docker-compose.headed.yml build  # Headed
 ```
 
-Add a line like:
+---
 
-```
-30 6 * * * cd /path/to/callsheet && /usr/bin/node dist/cli.js >> output/cron.log 2>&1
-```
-
-This runs at 6:30 AM every day. Adjust the time to whenever you want your brief ready.
-
-**Tips for cron:**
-
-- Use absolute paths — cron doesn't have your shell's PATH.
-- The `>> output/cron.log 2>&1` part captures output for debugging.
-- Make sure your `.env` file is in the project root (it's loaded relative to the working directory).
-- If your printer is a network printer, make sure the machine running cron can reach it.
-
-### Troubleshooting
+## Troubleshooting
 
 ### "Config not found"
 You need a `config.yaml` in the project root. Copy from the example: `cp config.example.yaml config.yaml`
@@ -526,34 +577,33 @@ Add your key to `.env`. Make sure there are no spaces around the `=` sign.
 Your Anthropic account needs credits. Go to [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing) to add funds. $5 covers hundreds of briefs.
 
 ### Google OAuth "This app isn't verified"
-Normal for personal projects. Click "Advanced" → "Go to (app name)".
+Normal for personal projects. Click "Advanced" > "Go to (app name)".
 
 ### Google OAuth "redirect_uri_mismatch"
-The auth flow starts a local server on port 3000. Make sure nothing else is using that port. If you're running remotely (SSH), you'll need to set up port forwarding.
+The auth flow uses a local server on port 3000. Make sure nothing else is using that port. If running remotely over SSH, set up port forwarding.
 
 ### Todoist returning 410 Gone
-The Todoist REST API v2 has been deprecated. Callsheet uses the current `/api/v1/` endpoint. If you see this error, make sure you're on the latest version of the code.
+The Todoist REST API v2 has been deprecated. Callsheet uses the current `/api/v1/` endpoint. Make sure you're on the latest version.
 
 ### Aviation weather timeout
-The aviationweather.gov API can be slow. The timeout is set to 30 seconds. If it still times out, the API may be having issues — check [aviationweather.gov](https://aviationweather.gov) directly.
+The aviationweather.gov API can be slow (30s timeout). If it persists, check [aviationweather.gov](https://aviationweather.gov) directly.
 
 ### Home Assistant "Very large payload"
-With `entities: []`, the connector pulls all sensors. If you have a large HA installation, specify the entities you care about to keep the payload under ~4K tokens.
+With `entities: []`, all sensors are pulled. Filter to specific entities to keep the payload under ~4K tokens.
 
 ### PDF is too dense / text is cut off
-Claude is generating too much content for one page. Options:
-- Trim connectors (fewer data sources = shorter brief)
-- Edit `src/prompts/system.md` to be stricter about brevity
-- Reduce `max_messages` for Gmail, or narrow the query
+Claude is generating too much content. Trim connectors, tighten the prompt in `src/prompts/system.md`, or reduce `max_messages` for Gmail.
 
 ### Brief is too sparse
-Add more household context in `config.yaml`. The more Claude knows about your life, the better it connects dots. Also consider switching from Sonnet to Opus for richer analysis.
+Add more household context in `config.yaml`. Consider switching from Sonnet to Opus for richer analysis.
 
-### Understanding costs
+---
 
-Every brief makes one Claude API call. Cost depends on input tokens (your data) + output tokens (the brief).
+## Understanding costs
 
-Run `--test` to see your specific breakdown:
+Every brief makes 3 Claude API calls (generation, memory extraction, self-critique). The dashboard tracks costs in the **Usage** page.
+
+Run `--test` to see your specific token breakdown:
 
 ```
 Token budget breakdown:
@@ -572,4 +622,4 @@ Rough monthly costs at one brief/day:
 | ~10K (typical) | ~$1.50 | ~$8.00 |
 | ~20K (heavy) | ~$3.00 | ~$15.00 |
 
-The biggest cost lever is connector data volume. Home Assistant with all sensors can easily be 15K+ tokens on its own. Filter to specific entities if you want to keep costs down.
+The biggest cost lever is connector data volume. Home Assistant with all sensors can easily be 15K+ tokens. Filter to specific entities to keep costs down.
