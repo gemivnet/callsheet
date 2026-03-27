@@ -48,6 +48,57 @@ export function createApp(): express.Express {
     app.use(express.static(staticDir));
   }
 
+  // ─── Setup ───────────────────────────────────────────────────────────────
+
+  app.get('/api/setup/status', (_req, res) => {
+    const configExists = existsSync(getConfigPath());
+    const envExists = existsSync('.env');
+    const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
+    res.json({ config_exists: configExists, env_exists: envExists, has_api_key: hasApiKey });
+  });
+
+  app.post('/api/setup', (req, res) => {
+    try {
+      const body = req.body as {
+        model?: string;
+        printer?: string;
+        connectors?: Record<string, Record<string, unknown>>;
+        context?: Record<string, string>;
+        anthropic_api_key?: string;
+      };
+
+      // Build config object
+      const config: Record<string, unknown> = {
+        model: body.model ?? 'claude-sonnet-4-20250514',
+        printer: body.printer ?? '',
+        output_dir: 'output',
+        credentials_dir: 'secrets',
+        connectors: body.connectors ?? {},
+        context: body.context ?? {},
+      };
+
+      const yamlStr = yaml.dump(config, { lineWidth: 120, noRefs: true });
+      writeFileSync(getConfigPath(), yamlStr);
+
+      // Append API key to .env if provided
+      if (body.anthropic_api_key) {
+        const envPath = '.env';
+        const existing = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+        if (!existing.includes('ANTHROPIC_API_KEY=')) {
+          const line = `ANTHROPIC_API_KEY=${body.anthropic_api_key}\n`;
+          writeFileSync(envPath, existing + line);
+          // Set it in the current process too
+          process.env.ANTHROPIC_API_KEY = body.anthropic_api_key;
+        }
+      }
+
+      res.json({ success: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
+    }
+  });
+
   // ─── Health ────────────────────────────────────────────────────────────────
 
   app.get('/api/health', (_req, res) => {

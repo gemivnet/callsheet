@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dashboard } from './pages/Dashboard.js';
 import { Briefs } from './pages/Briefs.js';
 import { BriefDetail } from './pages/BriefDetail.js';
@@ -8,6 +8,7 @@ import { Memory } from './pages/Memory.js';
 import { Config } from './pages/Config.js';
 import { Logs } from './pages/Logs.js';
 import { Usage } from './pages/Usage.js';
+import { Setup } from './pages/Setup.js';
 
 type Page =
   | { name: 'dashboard' }
@@ -32,8 +33,34 @@ const navItems: { page: Page; label: string; icon: string }[] = [
 
 export function App() {
   const [page, setPage] = useState<Page>({ name: 'dashboard' });
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch('/api/setup/status')
+      .then((r) => r.json())
+      .then((data: { config_exists: boolean }) => {
+        setNeedsSetup(!data.config_exists);
+      })
+      .catch(() => setNeedsSetup(false));
+  }, []);
 
   const navigate = (p: Page) => setPage(p);
+
+  // Loading state
+  if (needsSetup === null) {
+    return (
+      <div className="layout">
+        <div className="content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <p className="muted">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Setup wizard
+  if (needsSetup) {
+    return <Setup onComplete={() => setNeedsSetup(false)} />;
+  }
 
   return (
     <div className="layout">
