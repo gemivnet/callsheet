@@ -11,4 +11,4 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./output:/app/output
-      - ./credentials:/app/credentials:ro
+      - ./secrets:/app/secrets:ro
