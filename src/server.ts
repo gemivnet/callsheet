@@ -318,7 +318,7 @@ export function createApp(): express.Express {
 
   // ─── SPA fallback ──────────────────────────────────────────────────────────
 
-  app.get('*', (_req, res) => {
+  app.get('/{*path}', (_req, res) => {
     const indexPath = join(staticDir, 'index.html');
     if (existsSync(indexPath)) {
       res.sendFile(indexPath);
