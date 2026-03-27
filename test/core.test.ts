@@ -11,13 +11,23 @@ const mockReaddirSync = jest.fn<(...args: unknown[]) => string[]>();
 const mockUnlinkSync = jest.fn();
 const mockExecSync = jest.fn();
 
-jest.unstable_mockModule('node:fs', () => ({
+const fsMock = {
   readFileSync: mockReadFileSync,
   writeFileSync: mockWriteFileSync,
   mkdirSync: mockMkdirSync,
   existsSync: mockExistsSync,
   readdirSync: mockReaddirSync,
   unlinkSync: mockUnlinkSync,
+};
+
+jest.unstable_mockModule('node:fs', () => ({
+  ...fsMock,
+  default: fsMock,
+}));
+
+jest.unstable_mockModule('fs', () => ({
+  ...fsMock,
+  default: fsMock,
 }));
 
 jest.unstable_mockModule('node:child_process', () => ({
@@ -44,8 +54,28 @@ jest.unstable_mockModule('@anthropic-ai/sdk', () => ({
   })),
 }));
 
+const mockRenderPdf = jest.fn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('/tmp/test.pdf');
+
+jest.unstable_mockModule('../src/render.js', () => ({
+  renderPdf: mockRenderPdf,
+}));
+
+const mockLogUsage = jest.fn();
+
+jest.unstable_mockModule('../src/usage.js', () => ({
+  logUsage: mockLogUsage,
+}));
+
 // Import after mocks
 const core = await import('../src/core.js');
+
+// Helper to create mock API responses with usage data
+function mockApiResponse(text: string) {
+  return {
+    content: [{ type: 'text', text }],
+    usage: { input_tokens: 100, output_tokens: 50 },
+  };
+}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -70,18 +100,12 @@ describe('loadConfig', () => {
     });
   });
 
-  it('should exit with error if config not found', () => {
+  it('should throw error if config not found', () => {
     mockReadFileSync.mockImplementation(() => {
       throw new Error('ENOENT');
     });
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    core.loadConfig('missing.yaml');
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
-    errorSpy.mockRestore();
+    expect(() => core.loadConfig('missing.yaml')).toThrow('Config not found');
   });
 });
 
@@ -266,9 +290,9 @@ describe('saveMemory', () => {
   const mockClient = { messages: { create: mockMessagesCreate } } as never;
 
   it('should save memory file when insights are generated', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '["Package arriving tomorrow", "Bill due Friday"]' }],
-    });
+    mockMessagesCreate.mockResolvedValue(
+      mockApiResponse('["Package arriving tomorrow", "Bill due Friday"]'),
+    );
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
 
@@ -283,9 +307,7 @@ describe('saveMemory', () => {
   });
 
   it('should not save when no insights are generated', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '[]' }],
-    });
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('[]'));
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
 
@@ -296,9 +318,7 @@ describe('saveMemory', () => {
   });
 
   it('should prune old memory files beyond 7 days', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '["insight"]' }],
-    });
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('["insight"]'));
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([
       'memory_2026-03-18.json',
@@ -331,9 +351,9 @@ describe('saveMemory', () => {
   });
 
   it('should strip code fences from API response', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '```json\n["fenced insight"]\n```' }],
-    });
+    mockMessagesCreate.mockResolvedValue(
+      mockApiResponse('```json\n["fenced insight"]\n```'),
+    );
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
 
@@ -353,9 +373,9 @@ describe('critiqueBrief', () => {
   };
 
   it('should return issues from critique', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '["Duplicate item in tasks and exec brief"]' }],
-    });
+    mockMessagesCreate.mockResolvedValue(
+      mockApiResponse('["Duplicate item in tasks and exec brief"]'),
+    );
     mockExistsSync.mockReturnValue(false);
 
     const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
@@ -365,9 +385,7 @@ describe('critiqueBrief', () => {
   });
 
   it('should save critique to feedback dir', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '["Too verbose"]' }],
-    });
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('["Too verbose"]'));
 
     const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
 
@@ -379,9 +397,7 @@ describe('critiqueBrief', () => {
   });
 
   it('should return empty array when no issues found', async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [{ type: 'text', text: '[]' }],
-    });
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('[]'));
 
     const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
 
@@ -423,9 +439,9 @@ describe('generateBrief', () => {
 
     // generateBrief calls messages.create 3 times: brief, memory, critique
     mockMessagesCreate
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: briefJson }] }) // main brief
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '["insight"]' }] }) // memory
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '[]' }] }); // critique
+      .mockResolvedValueOnce(mockApiResponse(briefJson)) // main brief
+      .mockResolvedValueOnce(mockApiResponse('["insight"]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('[]')); // critique
 
     // Mock file system for prompt loading and memory/feedback
     mockReadFileSync.mockImplementation((path: unknown) => {
@@ -450,9 +466,9 @@ describe('generateBrief', () => {
     });
 
     mockMessagesCreate
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '```json\n' + briefJson + '\n```' }] })
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '[]' }] })
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '[]' }] });
+      .mockResolvedValueOnce(mockApiResponse('```json\n' + briefJson + '\n```'))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
 
     mockReadFileSync.mockImplementation((path: unknown) => {
       const p = path as string;
@@ -466,25 +482,21 @@ describe('generateBrief', () => {
     expect(brief.title).toBe('Fenced Brief');
   });
 
-  it('should exit if ANTHROPIC_API_KEY not set', async () => {
+  it('should throw if ANTHROPIC_API_KEY not set', async () => {
     delete process.env.ANTHROPIC_API_KEY;
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    await core.generateBrief(minimalConfig, '{}').catch(() => {});
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
-    errorSpy.mockRestore();
+    await expect(core.generateBrief(minimalConfig, '{}')).rejects.toThrow(
+      'ANTHROPIC_API_KEY not set',
+    );
   });
 
   it('should include connector issues in context', async () => {
     const briefJson = JSON.stringify({ title: 'Brief', sections: [] });
 
     mockMessagesCreate
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: briefJson }] })
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '[]' }] })
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: '[]' }] });
+      .mockResolvedValueOnce(mockApiResponse(briefJson))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
 
     mockReadFileSync.mockImplementation((path: unknown) => {
       const p = path as string;
