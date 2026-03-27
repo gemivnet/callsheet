@@ -20,16 +20,11 @@ Developer makes changes
   → runs `yarn changeset` to describe the change
   → commits code + changeset file
   → pushes to main
-  → CI: lint + test
-  → Release: build Docker → publish preview to GHCR
+  → CI/CD: lint + test → build Docker → publish preview to GHCR
 
 When ready for stable release:
-  → runs `yarn release` (changeset version)
-  → changeset consumes .changeset/*.md files
-  → bumps version in package.json
-  → generates/updates CHANGELOG.md
-  → developer commits + pushes
-  → Release: detects CHANGELOG.md change → publishes stable + GitHub Release
+  → runs `yarn release` (automated: version bump → commit → push)
+  → CI/CD: lint + test → build Docker → publish stable + latest to GHCR + GitHub Release
 ```
 
 ## Versioning (Semver)
@@ -81,8 +76,7 @@ The pre-commit hook will verify a changeset exists if `src/` files changed.
 
 ### 4. CI runs automatically
 
-- **CI workflow** → lint + test + coverage
-- **Release workflow** → builds Docker image → pushes `0.1.0-preview.<sha>` to GHCR
+- **CI/CD pipeline** → lint + test + coverage → if passing → builds Docker image → pushes preview to GHCR
 
 You can pull and test the preview:
 
@@ -100,37 +94,22 @@ When you've accumulated changes and want to publish a stable version:
 yarn release
 ```
 
-This runs `changeset version`, which:
-- Reads all pending `.changeset/*.md` files
-- Determines the version bump (highest wins — if any changeset says `minor`, the bump is at least `minor`)
-- Bumps `version` in `package.json`
-- Writes entries to `CHANGELOG.md`
-- Deletes the consumed `.changeset/*.md` files
+This single command handles everything:
+1. Reads all pending `.changeset/*.md` files
+2. Determines the version bump (highest wins — if any changeset says `minor`, the bump is at least `minor`)
+3. Bumps `version` in `package.json`
+4. Writes entries to `CHANGELOG.md`
+5. Deletes the consumed `.changeset/*.md` files
+6. Shows the diff for review
+7. Asks for confirmation
+8. Commits and pushes
 
-### 2. Review the changes
+### 2. Pipeline handles the rest
 
-```bash
-git diff
-```
-
-You should see:
-- `package.json` version bumped (e.g. `0.1.0` → `0.2.0`)
-- `CHANGELOG.md` updated with all changeset summaries
-- `.changeset/*.md` files deleted
-
-### 3. Commit and push
-
-```bash
-git add -A
-git commit -m "📦 Release v0.2.0"
-git push
-```
-
-### 4. Pipeline handles the rest
-
-The release workflow detects that `CHANGELOG.md` was modified and:
+The CI/CD pipeline detects that `CHANGELOG.md` was modified and:
+- Runs lint + tests (gates the release)
 - Builds Docker image
-- Pushes `0.2.0` + `latest` tags to GHCR
+- Pushes `1.1.0` + `latest` tags to GHCR
 - Creates a **GitHub Release** with auto-generated release notes
 
 ## Docker Images

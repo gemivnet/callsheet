@@ -51,8 +51,7 @@ This project uses **Yarn 4** (Berry) with `node-modules` linker. Do not use npm.
 
 ## Workflows
 
-- **CI** (`ci.yml`) — runs lint + tests on every push to main
-- **Release** (`release.yml`) — builds Docker image, pushes to GHCR. Preview builds per commit, stable on version bump.
+- **CI/CD** (`ci.yml`) — single unified pipeline on every push to main: lint → test → release. The release job only runs if lint and test pass. Preview builds per commit, stable on version bump.
 
 ## Key Patterns
 

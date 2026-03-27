@@ -24,7 +24,7 @@
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
     "changeset": "changeset",
-    "release": "changeset version",
+    "release": "bash scripts/release.sh",
     "prepare": "husky"
   },
   "lint-staged": {
