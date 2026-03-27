@@ -5,6 +5,7 @@ secrets/
 output/
 node_modules/
 dist/
+web/dist/
 *.tsbuildinfo
 config.yaml
 config.*.yaml

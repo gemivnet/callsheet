@@ -4,7 +4,7 @@
  *
  * - headless_local:  runs the CLI (passthrough to cli.ts)
  * - headless_docker: starts the cron scheduler, no UI
- * - headed_docker:   starts the cron scheduler + Next.js web server
+ * - headed_docker:   starts the cron scheduler + Express web server
  */
 import 'dotenv/config';
 import { startScheduler } from './scheduler.js';
@@ -33,29 +33,8 @@ async function main(): Promise<void> {
       console.log('[entrypoint] Starting headed Docker mode...');
       startScheduler(cronSchedule, configPath);
 
-      // Start Next.js server as a child process
-      const { spawn } = await import('node:child_process');
-      const { join } = await import('node:path');
-
-      const nextBin = join(process.cwd(), 'web', 'node_modules', '.bin', 'next');
-      const port = process.env.PORT ?? '3000';
-
-      console.log(`[entrypoint] Starting web dashboard on port ${port}...`);
-      const server = spawn(nextBin, ['start', '-p', port], {
-        cwd: join(process.cwd(), 'web'),
-        stdio: 'inherit',
-        env: { ...process.env, PORT: port },
-      });
-
-      server.on('error', (e) => {
-        console.error('[entrypoint] Failed to start web server:', e);
-        process.exit(1);
-      });
-
-      server.on('exit', (code) => {
-        console.error(`[entrypoint] Web server exited with code ${code}`);
-        process.exit(code ?? 1);
-      });
+      const { startServer } = await import('./server.js');
+      startServer();
       break;
     }
 
@@ -66,7 +45,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
+main().catch((e: unknown) => {
   console.error('[entrypoint] Fatal error:', e);
   process.exit(1);
 });
