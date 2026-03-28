@@ -40,7 +40,8 @@ jest.unstable_mockModule('js-yaml', () => ({
   },
 }));
 
-const mockLoadConnectors = jest.fn<(...args: unknown[]) => unknown[]>().mockReturnValue([]);
+const mockLoadConnectors = jest.fn<(...args: unknown[]) => { connectors: unknown[]; initErrors: unknown[] }>()
+  .mockReturnValue({ connectors: [], initErrors: [] });
 
 jest.unstable_mockModule('../src/connectors/index.js', () => ({
   loadConnectors: mockLoadConnectors,
@@ -210,7 +211,7 @@ describe('printPdf', () => {
 
 describe('fetchAll', () => {
   it('should return results from successful connectors', async () => {
-    mockLoadConnectors.mockReturnValue([
+    mockLoadConnectors.mockReturnValue({ connectors: [
       {
         name: 'test',
         description: 'test connector',
@@ -221,7 +222,7 @@ describe('fetchAll', () => {
           priorityHint: 'normal',
         }),
       },
-    ]);
+    ], initErrors: [] });
 
     const { results, issues } = await core.fetchAll({ connectors: {} });
 
@@ -231,13 +232,13 @@ describe('fetchAll', () => {
   });
 
   it('should capture connector errors as issues', async () => {
-    mockLoadConnectors.mockReturnValue([
+    mockLoadConnectors.mockReturnValue({ connectors: [
       {
         name: 'broken',
         description: 'broken connector',
         fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue(new Error('connection timeout')),
       },
-    ]);
+    ], initErrors: [] });
 
     const { results, issues } = await core.fetchAll({ connectors: {} });
 
@@ -248,7 +249,7 @@ describe('fetchAll', () => {
   });
 
   it('should handle mixed success and failure', async () => {
-    mockLoadConnectors.mockReturnValue([
+    mockLoadConnectors.mockReturnValue({ connectors: [
       {
         name: 'good',
         description: 'works',
@@ -264,7 +265,7 @@ describe('fetchAll', () => {
         description: 'fails',
         fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue(new Error('oops')),
       },
-    ]);
+    ], initErrors: [] });
 
     const { results, issues } = await core.fetchAll({ connectors: {} });
 
@@ -273,16 +274,30 @@ describe('fetchAll', () => {
   });
 
   it('should handle non-Error thrown values', async () => {
-    mockLoadConnectors.mockReturnValue([
+    mockLoadConnectors.mockReturnValue({ connectors: [
       {
         name: 'weird',
         description: 'throws string',
         fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue('string error'),
       },
-    ]);
+    ], initErrors: [] });
 
     const { issues } = await core.fetchAll({ connectors: {} });
     expect(issues[0].error).toBe('string error');
+  });
+
+  it('should include init errors in issues', async () => {
+    mockLoadConnectors.mockReturnValue({
+      connectors: [],
+      initErrors: [{ connector: 'broken_init', error: 'Init failed: missing config' }],
+    });
+
+    const { results, issues } = await core.fetchAll({ connectors: {} });
+
+    expect(results).toHaveLength(0);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].connector).toBe('broken_init');
+    expect(issues[0].error).toContain('Init failed');
   });
 });
 
@@ -515,5 +530,85 @@ describe('generateBrief', () => {
     const opts = firstCall[0] as { system: string };
     expect(opts.system).toContain('weather');
     expect(opts.system).toContain('timeout');
+  });
+
+  it('should retry on 529 overloaded errors', async () => {
+    const briefJson = JSON.stringify({ title: 'Retry Brief', sections: [] });
+    const overloadedError = Object.assign(new Error('Overloaded'), { status: 529 });
+
+    mockMessagesCreate
+      .mockRejectedValueOnce(overloadedError) // 1st attempt fails
+      .mockResolvedValueOnce(mockApiResponse(briefJson)) // 2nd attempt succeeds
+      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('[]')); // critique
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'Prompt';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const brief = await core.generateBrief(minimalConfig, '{}');
+    expect(brief.title).toBe('Retry Brief');
+    // Should have been called twice for the brief (retry) + memory + critique
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(4);
+  }, 30_000);
+
+  it('should return error brief after all retries exhausted', async () => {
+    const overloadedError = Object.assign(new Error('Overloaded'), { status: 529 });
+
+    mockMessagesCreate.mockRejectedValue(overloadedError);
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'Prompt';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(minimalConfig, '[]', [
+      { connector: 'gmail', error: 'auth expired' },
+    ]);
+
+    expect(brief.subtitle).toContain('GENERATION FAILED');
+    // Should include the connector issue
+    const issuesSection = brief.sections.find((s) => s.heading === 'Issues During This Run');
+    expect(issuesSection).toBeDefined();
+    expect(issuesSection!.items![0].label).toBe('gmail');
+
+    consoleSpy.mockRestore();
+    consoleLogSpy.mockRestore();
+  }, 60_000);
+
+  it('should not retry on non-retryable errors (e.g. 401)', async () => {
+    const authError = Object.assign(new Error('Unauthorized'), { status: 401 });
+
+    mockMessagesCreate.mockRejectedValue(authError);
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'Prompt';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(minimalConfig, '[]');
+
+    // Should not retry — only 1 call
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    expect(brief.subtitle).toContain('GENERATION FAILED');
+
+    consoleSpy.mockRestore();
+    consoleLogSpy.mockRestore();
   });
 });

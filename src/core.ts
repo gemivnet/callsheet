@@ -18,6 +18,37 @@ import { logUsage } from './usage.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// ---------------------------------------------------------------------------
+// RuntimeErrors — global collector for any error conditions during a run.
+// Connectors, process handlers, and pipeline code all push here.
+// generateBrief drains these into the Claude prompt so they appear in the brief.
+// ---------------------------------------------------------------------------
+
+export interface RuntimeError {
+  source: string;
+  error: string;
+  severity: 'warning' | 'error';
+}
+
+class RuntimeErrorCollector {
+  private errors: RuntimeError[] = [];
+
+  add(source: string, error: string, severity: 'warning' | 'error' = 'error'): void {
+    this.errors.push({ source, error, severity });
+  }
+
+  /** Drain all collected errors (empties the list). */
+  drain(): RuntimeError[] {
+    return this.errors.splice(0);
+  }
+
+  get length(): number {
+    return this.errors.length;
+  }
+}
+
+export const runtimeErrors = new RuntimeErrorCollector();
+
 export function loadConfig(configPath: string): CallsheetConfig {
   try {
     return yaml.load(readFileSync(configPath, 'utf-8')) as CallsheetConfig;
@@ -36,9 +67,14 @@ export interface ConnectorIssue {
 export async function fetchAll(
   config: CallsheetConfig,
 ): Promise<{ results: ConnectorResult[]; issues: ConnectorIssue[] }> {
-  const connectors = loadConnectors(config as Record<string, unknown>);
+  const { connectors, initErrors } = loadConnectors(config as Record<string, unknown>);
   const results: ConnectorResult[] = [];
   const issues: ConnectorIssue[] = [];
+
+  // Surface init errors as connector issues
+  for (const err of initErrors) {
+    issues.push({ connector: err.connector, error: err.error });
+  }
 
   for (const conn of connectors) {
     try {
@@ -182,7 +218,9 @@ async function generateMemoryInsights(
     }
     return JSON.parse(text) as string[];
   } catch (e) {
-    console.log(`  Warning: Memory generation failed: ${e}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  Warning: Memory generation failed: ${msg}`);
+    runtimeErrors.add('memory_generation', msg, 'warning');
     return [];
   }
 }
@@ -344,7 +382,9 @@ export async function critiqueBrief(
 
     return issues;
   } catch (e) {
-    console.log(`  Warning: Self-critique failed: ${e}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  Warning: Self-critique failed: ${msg}`);
+    runtimeErrors.add('self_critique', msg, 'warning');
     return [];
   }
 }
@@ -454,7 +494,9 @@ async function detectResolvableTasks(
     if (fenceMatch) text = fenceMatch[1].trim();
     return JSON.parse(text) as AutoCloseRecommendation[];
   } catch (e) {
-    console.log(`  Warning: Auto-close detection failed: ${e}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  Warning: Auto-close detection failed: ${msg}`);
+    runtimeErrors.add('auto_close', msg, 'warning');
     return [];
   }
 }
@@ -548,15 +590,21 @@ function buildAutoCloseContext(outputDir: string): string {
 // ---------------------------------------------------------------------------
 
 function buildConnectorIssuesContext(issues: ConnectorIssue[]): string {
-  if (!issues.length) return '';
+  const drainedErrors = runtimeErrors.drain();
+  if (!issues.length && !drainedErrors.length) return '';
 
-  let ctx = '\n\n## Connector issues\n\n';
-  ctx += "The following data sources had errors during today's fetch. ";
+  let ctx = '\n\n## Issues during this run\n\n';
   ctx +=
-    'Mention these briefly in the Executive Brief so the household knows what data is missing and can fix it:\n\n';
+    'The following problems occurred. Mention them in the Executive Brief so the household ' +
+    'knows what data may be missing or degraded:\n\n';
+
   for (const issue of issues) {
-    ctx += `- **${issue.connector}**: ${issue.error}\n`;
+    ctx += `- **${issue.connector}** (connector): ${issue.error}\n`;
   }
+  for (const err of drainedErrors) {
+    ctx += `- **${err.source}** (${err.severity}): ${err.error}\n`;
+  }
+
   return ctx;
 }
 
@@ -602,6 +650,94 @@ function loadPrompt(config: CallsheetConfig): string {
   return prompt;
 }
 
+// ---------------------------------------------------------------------------
+// Retry helper with exponential backoff
+// ---------------------------------------------------------------------------
+
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 5_000; // 5s, 10s, 20s
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  retries = MAX_RETRIES,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastError = e;
+      const {status} = (e as { status?: number });
+      const retryable = status === 429 || status === 529 || status === 500 || status === 503;
+      if (!retryable || attempt === retries) break;
+
+      const delay = BASE_DELAY_MS * 2 ** attempt;
+      console.log(
+        `  Attempt ${attempt + 1} failed (${status}), retrying ${label} in ${delay / 1000}s...`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
+// ---------------------------------------------------------------------------
+// Error brief — generated when the Claude API is completely unreachable
+// ---------------------------------------------------------------------------
+
+function buildErrorBrief(error: unknown, connectorIssues: ConnectorIssue[]): Brief {
+  const today = new Date();
+  const dateStr = today.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const {status} = (error as { status?: number });
+  const drainedErrors = runtimeErrors.drain();
+
+  const sections: Brief['sections'] = [
+    {
+      heading: 'Generation Error',
+      body:
+        `Brief generation failed after ${MAX_RETRIES + 1} attempts. ` +
+        (status ? `API returned status ${status}. ` : '') +
+        `Error: ${errMsg}\n\n` +
+        'Data was fetched successfully and cached — the brief will retry on the next run.',
+    },
+  ];
+
+  // Surface all issues: connector errors + runtime errors
+  const allIssueItems = [
+    ...connectorIssues.map((issue) => ({
+      label: issue.connector,
+      note: issue.error,
+      urgent: true,
+    })),
+    ...drainedErrors.map((err) => ({
+      label: err.source,
+      note: err.error,
+      urgent: err.severity === 'error',
+    })),
+  ];
+
+  if (allIssueItems.length) {
+    sections.push({
+      heading: 'Issues During This Run',
+      items: allIssueItems,
+    });
+  }
+
+  return {
+    title: `Callsheet — ${dateStr}`,
+    subtitle: '⚠ GENERATION FAILED',
+    sections,
+  };
+}
+
 export async function generateBrief(
   config: CallsheetConfig,
   dataPayload: string,
@@ -629,37 +765,49 @@ export async function generateBrief(
   const prevBrief = loadPreviousBrief(outputDir);
   const diffContext = prevBrief ? buildDiffContext(prevBrief) : '';
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system: systemPrompt,
-    messages: [
-      {
-        role: 'user',
-        content:
-          `Today is ${dateStr}.\n\n` +
-          'Here is all available data from the connected sources:\n' +
-          `<data>\n${dataPayload}\n</data>\n` +
-          diffContext +
-          '\n' +
-          'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
-      },
-    ],
-  });
+  let brief: Brief;
 
-  logUsage(outputDir, model, 'brief', response.usage.input_tokens, response.usage.output_tokens);
+  try {
+    const response = await withRetry(
+      () =>
+        client.messages.create({
+          model,
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content:
+                `Today is ${dateStr}.\n\n` +
+                'Here is all available data from the connected sources:\n' +
+                `<data>\n${dataPayload}\n</data>\n` +
+                diffContext +
+                '\n' +
+                'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
+            },
+          ],
+        }),
+      'Claude API call',
+    );
 
-  let { text } = response.content[0] as { type: 'text'; text: string };
+    logUsage(outputDir, model, 'brief', response.usage.input_tokens, response.usage.output_tokens);
 
-  // Strip code fences if present
-  if (text.startsWith('```')) {
-    const lines = text.split('\n');
-    if (lines[0].startsWith('```')) lines.shift();
-    if (lines.at(-1)?.trim() === '```') lines.pop();
-    text = lines.join('\n');
+    let { text } = response.content[0] as { type: 'text'; text: string };
+
+    // Strip code fences if present
+    if (text.startsWith('```')) {
+      const lines = text.split('\n');
+      if (lines[0].startsWith('```')) lines.shift();
+      if (lines.at(-1)?.trim() === '```') lines.pop();
+      text = lines.join('\n');
+    }
+
+    brief = JSON.parse(text) as Brief;
+  } catch (e) {
+    console.error(`  Brief generation failed: ${e}`);
+    console.log('  Generating error brief with cached data...');
+    return buildErrorBrief(e, connectorIssues);
   }
-
-  const brief = JSON.parse(text) as Brief;
 
   // Save memory for future briefs
   await saveMemory(client, model, dataPayload, outputDir);
