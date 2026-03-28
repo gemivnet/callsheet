@@ -668,7 +668,7 @@ async function withRetry<T>(
       return await fn();
     } catch (e) {
       lastError = e;
-      const {status} = (e as { status?: number });
+      const { status } = e as { status?: number };
       const retryable = status === 429 || status === 529 || status === 500 || status === 503;
       if (!retryable || attempt === retries) break;
 
@@ -696,7 +696,7 @@ function buildErrorBrief(error: unknown, connectorIssues: ConnectorIssue[]): Bri
   });
 
   const errMsg = error instanceof Error ? error.message : String(error);
-  const {status} = (error as { status?: number });
+  const { status } = error as { status?: number };
   const drainedErrors = runtimeErrors.drain();
 
   const sections: Brief['sections'] = [
