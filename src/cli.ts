@@ -1,8 +1,36 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import { program } from 'commander';
-import { loadConfig, fetchAll, buildDataPayload, critiqueBrief, runPipeline } from './core.js';
+import {
+  loadConfig,
+  fetchAll,
+  buildDataPayload,
+  critiqueBrief,
+  runPipeline,
+  runtimeErrors,
+} from './core.js';
 import { getRegistry } from './connectors/index.js';
+
+// Prevent stray async errors (e.g. from @actual-app/api background tasks)
+// from crashing the entire process. Collect them so the brief can report them.
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error(`[unhandled rejection] ${msg}`);
+  runtimeErrors.add('unhandled_rejection', msg);
+});
+process.on('uncaughtException', (err) => {
+  const msg = err?.message ?? '';
+  if (
+    msg.includes('Cannot read properties of null') ||
+    err?.stack?.includes('bundle.api.js') ||
+    err?.stack?.includes('@actual-app')
+  ) {
+    console.error(`[suppressed async error] ${msg}`);
+    runtimeErrors.add('actual_budget (background)', msg);
+  } else {
+    throw err; // re-throw unknown fatal errors
+  }
+});
 
 program
   .name('callsheet')

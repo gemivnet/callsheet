@@ -76,9 +76,18 @@ export function getRegistry(): Map<string, ConnectorEntry> {
   return new Map(registry);
 }
 
-export function loadConnectors(config: Record<string, unknown>): Connector[] {
+export interface ConnectorInitError {
+  connector: string;
+  error: string;
+}
+
+export function loadConnectors(config: Record<string, unknown>): {
+  connectors: Connector[];
+  initErrors: ConnectorInitError[];
+} {
   const connectorConfigs = (config.connectors ?? {}) as Record<string, ConnectorConfig>;
   const connectors: Connector[] = [];
+  const initErrors: ConnectorInitError[] = [];
 
   for (const [name, connConfig] of Object.entries(connectorConfigs)) {
     if (!connConfig.enabled) continue;
@@ -86,17 +95,20 @@ export function loadConnectors(config: Record<string, unknown>): Connector[] {
     const entry = registry.get(name);
     if (!entry) {
       console.log(`  WARNING: No connector registered for '${name}', skipping.`);
+      initErrors.push({ connector: name, error: 'No connector registered with this name' });
       continue;
     }
 
     try {
       connectors.push(entry.factory(connConfig));
     } catch (e) {
-      console.log(`  WARNING: Failed to initialize connector '${name}': ${e}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.log(`  WARNING: Failed to initialize connector '${name}': ${msg}`);
+      initErrors.push({ connector: name, error: `Init failed: ${msg}` });
     }
   }
 
-  return connectors;
+  return { connectors, initErrors };
 }
 
 export type { Connector, ConnectorConfig };

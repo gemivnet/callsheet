@@ -105,40 +105,43 @@ describe('getRegistry', () => {
 });
 
 describe('loadConnectors', () => {
-  it('should return empty array when no connectors configured', () => {
-    const result = loadConnectors({ connectors: {} });
-    expect(result).toEqual([]);
+  it('should return empty arrays when no connectors configured', () => {
+    const { connectors, initErrors } = loadConnectors({ connectors: {} });
+    expect(connectors).toEqual([]);
+    expect(initErrors).toEqual([]);
   });
 
   it('should load enabled connectors', () => {
-    const result = loadConnectors({
+    const { connectors } = loadConnectors({
       connectors: {
         weather: { enabled: true, lat: 40, lon: -74 },
       },
     });
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe('weather');
+    expect(connectors).toHaveLength(1);
+    expect(connectors[0].name).toBe('weather');
   });
 
   it('should skip disabled connectors', () => {
-    const result = loadConnectors({
+    const { connectors } = loadConnectors({
       connectors: {
         weather: { enabled: false },
         market: { enabled: true, symbols: ['AAPL'] },
       },
     });
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe('market');
+    expect(connectors).toHaveLength(1);
+    expect(connectors[0].name).toBe('market');
   });
 
-  it('should skip unknown connectors with a warning', () => {
+  it('should report unknown connectors as init errors', () => {
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const result = loadConnectors({
+    const { connectors, initErrors } = loadConnectors({
       connectors: {
         nonexistent_connector: { enabled: true },
       },
     });
-    expect(result).toHaveLength(0);
+    expect(connectors).toHaveLength(0);
+    expect(initErrors).toHaveLength(1);
+    expect(initErrors[0].connector).toBe('nonexistent_connector');
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining("No connector registered for 'nonexistent_connector'"),
     );
@@ -146,18 +149,19 @@ describe('loadConnectors', () => {
   });
 
   it('should handle missing connectors key gracefully', () => {
-    const result = loadConnectors({});
-    expect(result).toEqual([]);
+    const { connectors, initErrors } = loadConnectors({});
+    expect(connectors).toEqual([]);
+    expect(initErrors).toEqual([]);
   });
 
   it('should load multiple connectors', () => {
-    const result = loadConnectors({
+    const { connectors } = loadConnectors({
       connectors: {
         weather: { enabled: true },
         market: { enabled: true },
         todoist: { enabled: true },
       },
     });
-    expect(result).toHaveLength(3);
+    expect(connectors).toHaveLength(3);
   });
 });
