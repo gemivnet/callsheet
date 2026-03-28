@@ -244,11 +244,13 @@ else
     fi
   fi
 
-  # --- npm ---
-  if command_exists npm; then
-    ok "npm $(npm --version)"
+  # --- yarn ---
+  if command_exists yarn; then
+    ok "yarn $(yarn --version)"
   else
-    die "npm not found. It should come with Node.js — something is wrong."
+    substep "Installing Yarn via corepack..."
+    corepack enable 2>/dev/null || npm install -g corepack
+    ok "yarn $(yarn --version)"
   fi
 
   # --- CUPS (printing, optional) ---
@@ -311,19 +313,19 @@ else
 fi
 
 # =============================================================================
-# Phase 2: npm install
+# Phase 2: yarn install
 # =============================================================================
 step "Phase 2: Installing Dependencies"
 
 cd "$INSTALL_DIR"
 
 if [[ -d "node_modules" ]]; then
-  substep "node_modules exists — running npm install to sync..."
+  substep "node_modules exists — running yarn install to sync..."
 else
-  substep "Running npm install..."
+  substep "Running yarn install..."
 fi
 
-npm install 2>&1 | tail -5
+yarn install 2>&1 | tail -5
 ok "Dependencies installed ($(ls node_modules 2>/dev/null | wc -l | xargs) packages)"
 
 # =============================================================================
@@ -449,7 +451,7 @@ if [[ "${SKIP_CONFIG:-}" != "true" ]]; then
     if [[ -n "$PRINTER_NAME" ]]; then
       ok "Printer: $PRINTER_NAME"
     else
-      info "No printer — use 'npm run preview' to generate PDFs without printing"
+      info "No printer — use 'yarn preview' to generate PDFs without printing"
     fi
   fi
 
@@ -1008,11 +1010,11 @@ if [[ -n "$GCAL_ENABLED" ]]; then
       npx tsx src/cli.ts --auth google_calendar 2>&1
       RAN_AUTH=true
     else
-      warn "Run 'npm run auth:gcal' later to authenticate"
+      warn "Run 'yarn auth:gcal' later to authenticate"
     fi
   else
     warn "No secrets/credentials.json — skipping OAuth"
-    info "Add credentials.json then run: npm run auth:gcal"
+    info "Add credentials.json then run: yarn auth:gcal"
   fi
 fi
 
@@ -1032,11 +1034,11 @@ if [[ -n "$GMAIL_ENABLED" ]]; then
       npx tsx src/cli.ts --auth gmail 2>&1
       RAN_AUTH=true
     else
-      warn "Run 'npm run auth:gmail' later to authenticate"
+      warn "Run 'yarn auth:gmail' later to authenticate"
     fi
   else
     warn "No secrets/credentials.json — skipping OAuth"
-    info "Add credentials.json then run: npm run auth:gmail"
+    info "Add credentials.json then run: yarn auth:gmail"
   fi
 fi
 
@@ -1162,7 +1164,7 @@ elif [[ "$PLATFORM" == "macos" ]]; then
   info "  crontab -e"
   info "  30 6 * * * cd $INSTALL_DIR && /usr/local/bin/node dist/cli.js >> output/cron.log 2>&1"
   echo ""
-  info "Or use 'npm run build' first, then schedule the built version."
+  info "Or use 'yarn build' first, then schedule the built version."
   if ask_yn "Set up a cron job now?" "N"; then
     ask "What time? (HH:MM, 24h format)" "06:30"
     IFS=':' read -ra TIME_PARTS <<< "$REPLY"
@@ -1172,9 +1174,9 @@ elif [[ "$PLATFORM" == "macos" ]]; then
     # Build the cron command — handle nvm if needed
     NODE_PATH="$(which node)"
     if [[ "$NODE_PATH" == *".nvm"* ]]; then
-      CRON_CMD="$CRON_MIN $CRON_HOUR * * * export NVM_DIR=\"\$HOME/.nvm\" && . \"\$NVM_DIR/nvm.sh\" && cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; npm install --prefer-offline --silent 2>/dev/null; npm run print >> $INSTALL_DIR/output/cron.log 2>&1"
+      CRON_CMD="$CRON_MIN $CRON_HOUR * * * export NVM_DIR=\"\$HOME/.nvm\" && . \"\$NVM_DIR/nvm.sh\" && cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; yarn install --immutable 2>/dev/null; yarn print >> $INSTALL_DIR/output/cron.log 2>&1"
     else
-      CRON_CMD="$CRON_MIN $CRON_HOUR * * * cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; npm install --prefer-offline --silent 2>/dev/null; $NODE_PATH $(pwd)/dist/cli.js >> $INSTALL_DIR/output/cron.log 2>&1"
+      CRON_CMD="$CRON_MIN $CRON_HOUR * * * cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; yarn install --immutable 2>/dev/null; $NODE_PATH $(pwd)/dist/cli.js >> $INSTALL_DIR/output/cron.log 2>&1"
     fi
 
     if crontab -l 2>/dev/null | grep -qF "callsheet"; then
@@ -1200,9 +1202,9 @@ elif [[ "$PLATFORM" == "linux" ]]; then
 
     NODE_PATH="$(which node)"
     if [[ "$NODE_PATH" == *".nvm"* ]]; then
-      CRON_CMD="$CRON_MIN $CRON_HOUR * * * export NVM_DIR=\"\$HOME/.nvm\" && . \"\$NVM_DIR/nvm.sh\" && cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; npm install --prefer-offline --silent 2>/dev/null; npm run print >> $INSTALL_DIR/output/cron.log 2>&1"
+      CRON_CMD="$CRON_MIN $CRON_HOUR * * * export NVM_DIR=\"\$HOME/.nvm\" && . \"\$NVM_DIR/nvm.sh\" && cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; yarn install --immutable 2>/dev/null; yarn print >> $INSTALL_DIR/output/cron.log 2>&1"
     else
-      CRON_CMD="$CRON_MIN $CRON_HOUR * * * cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; npm install --prefer-offline --silent 2>/dev/null; $NODE_PATH $(pwd)/dist/cli.js >> $INSTALL_DIR/output/cron.log 2>&1"
+      CRON_CMD="$CRON_MIN $CRON_HOUR * * * cd $INSTALL_DIR && git pull origin main --ff-only 2>/dev/null; yarn install --immutable 2>/dev/null; $NODE_PATH $(pwd)/dist/cli.js >> $INSTALL_DIR/output/cron.log 2>&1"
     fi
 
     if crontab -l 2>/dev/null | grep -qF "callsheet"; then
@@ -1228,17 +1230,17 @@ echo ""
 echo -e "${BOLD}${GREEN}━━━ Setup Complete ━━━${RESET}"
 echo ""
 echo -e "  ${BOLD}Quick start:${RESET}"
-echo "    npm run test           Test all enabled connectors"
-echo "    npm run preview        Generate a PDF brief (no printing)"
-echo "    npm run print          Generate + print"
+echo "    yarn test              Test all enabled connectors"
+echo "    yarn preview           Generate a PDF brief (no printing)"
+echo "    yarn print             Generate + print"
 echo ""
 echo -e "  ${BOLD}Connector auth:${RESET}"
-echo "    npm run auth:gcal      Google Calendar OAuth"
-echo "    npm run auth:gmail     Gmail OAuth"
+echo "    yarn auth:gcal         Google Calendar OAuth"
+echo "    yarn auth:gmail        Gmail OAuth"
 echo ""
 echo -e "  ${BOLD}Debugging:${RESET}"
-echo "    npm run data           See raw JSON payload Claude receives"
-echo "    npm run test weather   Test a specific connector"
+echo "    yarn data              See raw JSON payload Claude receives"
+echo "    yarn test weather      Test a specific connector"
 echo ""
 echo -e "  ${BOLD}Files:${RESET}"
 echo "    config.yaml            Main configuration"
