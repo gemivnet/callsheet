@@ -100,6 +100,41 @@ describe('startScheduler', () => {
 
     consoleSpy.mockRestore();
   });
+
+  it('should handle errors in cron callback via .catch', async () => {
+    mockValidate.mockReturnValue(true);
+    mockLoadConfig.mockImplementation(() => {
+      throw new Error('config broke');
+    });
+
+    let cronCallback: (() => void) | undefined;
+    mockSchedule.mockImplementation((_expr: string, cb: () => void) => {
+      cronCallback = cb;
+      return { stop: jest.fn() };
+    });
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    scheduler.startScheduler('0 6 * * *', '/tmp/config.yaml');
+    expect(cronCallback).toBeDefined();
+
+    // Fire the cron callback — runGeneration will fail but the .catch should handle it
+    cronCallback!();
+
+    // Give the async .catch a tick to settle
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The error should be caught by runGeneration's try/catch, not the outer .catch
+    // But the outer .catch on line 47 handles truly unhandled rejections
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[scheduler] Generation failed:',
+      expect.any(Error),
+    );
+
+    consoleSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
 });
 
 describe('runGeneration', () => {

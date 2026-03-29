@@ -274,6 +274,55 @@ describe('gmail connector', () => {
       expect(result.description).toContain('3 total inbox unread');
     });
 
+    it('should fetch pinned label emails', async () => {
+      setupCredsAndToken();
+      setupGmailMocks(
+        [
+          {
+            id: 'pinned1',
+            from: 'airline@example.com',
+            subject: 'Booking Confirmation',
+            snippet: 'Your flight is confirmed',
+            labelIds: ['Label_Travel'],
+          },
+        ],
+        [
+          { id: 'INBOX', name: 'INBOX', type: 'system' },
+          { id: 'Label_Travel', name: 'Travel Confirmations', type: 'user' },
+        ],
+        0,
+      );
+
+      const conn = create({
+        enabled: true,
+        pinned_labels: ['Travel Confirmations'],
+      });
+      const result = await conn.fetch();
+
+      // Pinned labels note should appear in description
+      expect(result.description).toContain('Pinned labels');
+      expect(result.description).toContain('Travel Confirmations');
+    });
+
+    it('should skip pinned labels that do not exist for the account', async () => {
+      setupCredsAndToken();
+      setupGmailMocks(
+        [],
+        [{ id: 'INBOX', name: 'INBOX', type: 'system' }],
+        0,
+      );
+
+      const conn = create({
+        enabled: true,
+        pinned_labels: ['NonExistent Label'],
+      });
+      const result = await conn.fetch();
+
+      // Should succeed without error; label just gets skipped
+      const accounts = result.data.accounts as Record<string, unknown>[];
+      expect(accounts).toHaveLength(1);
+    });
+
     it('should use custom query from config', async () => {
       setupCredsAndToken();
       setupGmailMocks([], [], 0);

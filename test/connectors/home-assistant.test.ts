@@ -106,6 +106,23 @@ describe('home-assistant connector', () => {
       });
       await expect(conn.fetch()).rejects.toThrow('HA_TOKEN not set');
     });
+
+    it('should skip entities that return non-ok response', async () => {
+      process.env.HA_TOKEN = 'test-ha-token';
+      globalThis.fetch = jest.fn((() =>
+        Promise.resolve({ ok: false, status: 404 })) as unknown as typeof fetch);
+
+      const conn = create({
+        enabled: true,
+        url: 'http://ha.local:8123',
+        token_env: 'HA_TOKEN',
+        entities: ['sensor.nonexistent'],
+      });
+      const result = await conn.fetch();
+
+      const sensors = result.data.sensors as Record<string, unknown>[];
+      expect(sensors).toHaveLength(0);
+    });
   });
 
   describe('validate', () => {
@@ -122,6 +139,18 @@ describe('home-assistant connector', () => {
     it('should fail when url missing', () => {
       const checks = validate({ enabled: true });
       expect(checks.some(([icon]) => icon === FAIL)).toBe(true);
+    });
+
+    it('should show INFO for specific entities when configured', async () => {
+      process.env.HA_TOKEN = 'test';
+      const { INFO } = await import('../../src/test-icons.js');
+      const checks = validate({
+        enabled: true,
+        url: 'http://ha.local:8123',
+        token_env: 'HA_TOKEN',
+        entities: ['sensor.temp', 'binary_sensor.door'],
+      });
+      expect(checks.some(([icon, msg]) => icon === INFO && msg.includes('2 specific entities'))).toBe(true);
     });
 
     it('should fail when token env not set', () => {

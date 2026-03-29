@@ -313,6 +313,59 @@ describe('google-calendar connector', () => {
       expect(checks.some(([icon]) => icon === INFO)).toBe(true);
     });
 
+    it('should handle corrupted token file in multi-account mode', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockImplementation((path: unknown) => {
+        const p = path as string;
+        if (p.includes('token_')) throw new Error('JSON parse error');
+        return JSON.stringify({
+          installed: { client_id: 'id', client_secret: 'secret', redirect_uris: [] },
+        });
+      });
+
+      const checks = validate({
+        enabled: true,
+        accounts: [{ name: 'Corrupt' }],
+      });
+
+      expect(checks.some(([icon, msg]) => icon === FAIL && msg.includes('corrupted'))).toBe(true);
+    });
+
+    it('should warn when token has no refresh_token in multi-account mode', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockImplementation((path: unknown) => {
+        const p = path as string;
+        if (p.includes('token_')) return JSON.stringify({ access_token: 'tok' }); // no refresh_token
+        return JSON.stringify({
+          installed: { client_id: 'id', client_secret: 'secret', redirect_uris: [] },
+        });
+      });
+
+      const checks = validate({
+        enabled: true,
+        accounts: [{ name: 'NoRefresh' }],
+      });
+
+      const { WARN } = await import('../../src/test-icons.js');
+      expect(checks.some(([icon, msg]) => icon === WARN && msg.includes('No refresh token'))).toBe(
+        true,
+      );
+    });
+
+    it('should handle corrupted token file in legacy mode', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockImplementation(() => {
+        throw new Error('Invalid JSON');
+      });
+
+      const checks = validate({
+        enabled: true,
+        calendar_ids: ['primary'],
+      });
+
+      expect(checks.some(([icon, msg]) => icon === FAIL && msg.includes('corrupted'))).toBe(true);
+    });
+
     it('should fail when account token file missing', () => {
       mockExistsSync.mockImplementation((path: unknown) => {
         const p = path as string;

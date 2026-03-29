@@ -132,6 +132,27 @@ describe('entrypoint', () => {
     delete process.env.CONFIG_PATH;
   });
 
+  it('should handle fatal error in main() via catch handler', async () => {
+    process.env.MODE = 'headed_docker';
+
+    // Make startServer throw to trigger main().catch()
+    jest.unstable_mockModule('../src/server.js', () => ({
+      startServer: () => {
+        throw new Error('Fatal server crash');
+      },
+    }));
+
+    await import('../src/entrypoint.js');
+    // Give async catch handler time to settle
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[entrypoint] Fatal error:',
+      expect.any(Error),
+    );
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
+
   it('should be case-insensitive for MODE', async () => {
     process.env.MODE = 'HEADLESS_DOCKER';
 

@@ -130,6 +130,70 @@ describe('todoist connector', () => {
       logSpy.mockRestore();
     });
 
+    it('should categorize tasks into today, inbox, upcoming, and backlog', async () => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 3);
+      const futureDate = tomorrow.toISOString().slice(0, 10);
+
+      const farFuture = new Date();
+      farFuture.setDate(farFuture.getDate() + 14);
+      const farFutureDate = farFuture.toISOString().slice(0, 10);
+
+      process.env.TODOIST_TOKEN_PERSON1 = 'test-token-123';
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/projects')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(mockProjects),
+          });
+        }
+        if (urlStr.includes('/completed/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ items: [] }),
+          });
+        }
+        if (urlStr.includes('/tasks')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                results: [
+                  // Today task (due today)
+                  { id: 't1', content: 'Due today', project_id: 'proj1', priority: 1, due: { date: today, string: 'today', is_recurring: false } },
+                  // Upcoming task (due in 3 days, within 7-day window)
+                  { id: 't2', content: 'Due soon', project_id: 'proj1', priority: 2, due: { date: futureDate, string: 'in 3 days', is_recurring: false } },
+                  // Beyond 7-day window (should not be in upcoming)
+                  { id: 't3', content: 'Far future', project_id: 'proj1', priority: 1, due: { date: farFutureDate, string: 'in 14 days', is_recurring: false } },
+                  // Backlog (no due date, not in inbox)
+                  { id: 't4', content: 'No due', project_id: 'proj1', priority: 1, due: null },
+                  // Inbox item (no due date, in inbox project)
+                  { id: 't5', content: 'Inbox item', project_id: 'proj2', priority: 1, due: null },
+                ],
+                next_cursor: null,
+              }),
+          });
+        }
+        return Promise.resolve({ ok: false, status: 404 });
+      }) as typeof fetch);
+
+      const conn = create({
+        enabled: true,
+        accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }],
+      });
+      const result = await conn.fetch();
+      const accounts = result.data.accounts as Record<string, unknown>[];
+      const acct = accounts[0];
+
+      expect((acct.today as { id: string }[]).some((t) => t.id === 't1')).toBe(true);
+      expect((acct.upcoming as { id: string }[]).some((t) => t.id === 't2')).toBe(true);
+      // Far future should NOT be in upcoming
+      expect((acct.upcoming as { id: string }[]).some((t) => t.id === 't3')).toBe(false);
+      expect((acct.backlog as { id: string }[]).some((t) => t.id === 't4')).toBe(true);
+      expect((acct.inbox as { id: string }[]).some((t) => t.id === 't5')).toBe(true);
+    });
+
     it('should handle multiple accounts', async () => {
       setupMockFetch();
       process.env.TODOIST_TOKEN_PARTNER = 'test-token-456';
