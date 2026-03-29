@@ -125,6 +125,148 @@ describe('aviation-weather connector', () => {
       expect(tafs[0].periods[1].weather).toBe('-RA');
     });
 
+    it('should classify IFR flight category correctly', async () => {
+      // Test IFR: ceil < 500 or vis < 3
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/metar')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([{ icaoId: 'KJFK', rawOb: 'test', fltcat: 'IFR' }]),
+          });
+        }
+        if (urlStr.includes('/taf')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve([
+                {
+                  icaoId: 'KJFK',
+                  rawTAF: 'TAF test',
+                  fcsts: [
+                    {
+                      timeFrom: Math.floor(Date.now() / 1000),
+                      timeTo: Math.floor(Date.now() / 1000) + 3600,
+                      fcstChange: 'FM',
+                      wdir: 180,
+                      wspd: 10,
+                      visib: 2,
+                      ceil: 400,
+                      wxString: 'BR',
+                      raw: 'FM test IFR',
+                    },
+                  ],
+                },
+              ]),
+          });
+        }
+        return Promise.resolve({ ok: false, status: 404 });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+      const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
+      expect(tafs[0].periods[0].flightCategory).toBe('IFR');
+    });
+
+    it('should classify VFR flight category when ceil and vis are high', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/metar')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([{ icaoId: 'KJFK', rawOb: 'test', fltcat: 'VFR' }]),
+          });
+        }
+        if (urlStr.includes('/taf')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve([
+                {
+                  icaoId: 'KJFK',
+                  rawTAF: 'TAF test',
+                  fcsts: [
+                    {
+                      timeFrom: Math.floor(Date.now() / 1000),
+                      timeTo: Math.floor(Date.now() / 1000) + 3600,
+                      fcstChange: 'FM',
+                      wdir: 180,
+                      wspd: 5,
+                      visib: 10,
+                      ceil: 5000,
+                      wxString: '',
+                      raw: 'FM test VFR',
+                    },
+                  ],
+                },
+              ]),
+          });
+        }
+        return Promise.resolve({ ok: false, status: 404 });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+      const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
+      expect(tafs[0].periods[0].flightCategory).toBe('VFR');
+    });
+
+    it('should handle TAF periods with BECMG and PROB change types', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/metar')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([{ icaoId: 'KJFK', rawOb: 'test', fltcat: 'VFR' }]),
+          });
+        }
+        if (urlStr.includes('/taf')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve([
+                {
+                  icaoId: 'KJFK',
+                  rawTAF: 'TAF test',
+                  fcsts: [
+                    {
+                      timeFrom: Math.floor(Date.now() / 1000),
+                      timeTo: Math.floor(Date.now() / 1000) + 3600,
+                      fcstChange: 'BECMG',
+                      wdir: 180,
+                      wspd: 5,
+                      visib: 10,
+                      ceil: 5000,
+                      wxString: '',
+                      raw: 'BECMG test',
+                    },
+                    {
+                      timeFrom: Math.floor(Date.now() / 1000) + 3600,
+                      timeTo: Math.floor(Date.now() / 1000) + 7200,
+                      fcstChange: 'PROB30',
+                      wdir: 200,
+                      wspd: 8,
+                      visib: 6,
+                      ceil: 3000,
+                      wxString: '-RA',
+                      raw: 'PROB30 test',
+                    },
+                  ],
+                },
+              ]),
+          });
+        }
+        return Promise.resolve({ ok: false, status: 404 });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+      const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
+      expect(tafs[0].periods[0].type).toBe('becmg');
+      expect(tafs[0].periods[1].type).toBe('prob');
+    });
+
     it('should throw on METAR API error', async () => {
       globalThis.fetch = jest.fn((() =>
         Promise.resolve({ ok: false, status: 503 })) as unknown as typeof fetch);

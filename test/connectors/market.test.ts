@@ -105,7 +105,253 @@ describe('market connector', () => {
       const result = await conn.fetch();
       expect((result.data.symbols as unknown[]).length).toBe(2);
     });
+
+    it('should show "just now" for very recent news', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        regularMarketPrice: 100,
+                        previousClose: 99,
+                        shortName: 'Test',
+                        currency: 'USD',
+                        marketState: 'REGULAR',
+                      },
+                      indicators: {
+                        quote: [{ close: [98, 99, 100] }],
+                      },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                news: [
+                  {
+                    title: 'Breaking news',
+                    publisher: 'Reuters',
+                    // Published just seconds ago (less than 1 hour)
+                    providerPublishTime: Math.floor(Date.now() / 1000) - 60,
+                  },
+                  {
+                    title: 'Old news',
+                    publisher: 'AP',
+                    // Published 2 days ago (>= 24 hours)
+                    providerPublishTime: Math.floor(Date.now() / 1000) - 3600 * 48,
+                  },
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['TEST'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      const news = symbols[0].news as { age: string }[];
+      expect(news[0].age).toBe('just now');
+      expect(news[1].age).toBe('2d ago');
+    });
+
+    it('should handle news fetch error gracefully', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        regularMarketPrice: 100,
+                        previousClose: 99,
+                        shortName: 'Test',
+                        currency: 'USD',
+                        marketState: 'REGULAR',
+                      },
+                      indicators: {
+                        quote: [{ close: [98, 99, 100] }],
+                      },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.reject(new Error('Network error'));
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['TEST'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      // News should be empty array because of the catch
+      expect(symbols[0].news).toEqual([]);
+    });
   });
+
+    it('should handle missing meta fields and sparse data', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        // No regularMarketPrice, previousClose, shortName, longName, currency, marketState
+                      },
+                      indicators: {
+                        quote: [{ close: [null, 50] }],
+                      },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          // Non-ok response to cover the !resp.ok branch in fetchNews
+          return Promise.resolve({ ok: false, status: 403 });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['SPARSE'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      expect(symbols[0].symbol).toBe('SPARSE');
+      // Falls back to close array last element
+      expect(symbols[0].price).toBe(50);
+      // No previousClose in meta, falls back to close[-2] but only 1 non-null, so dayChange from close
+      expect(symbols[0].currency).toBe('USD'); // fallback
+      expect(symbols[0].marketState).toBe('unknown'); // fallback
+      expect(symbols[0].name).toBe('SPARSE'); // fallback to symbol itself
+      expect(symbols[0].news).toEqual([]);
+    });
+
+    it('should handle missing symbols config', async () => {
+      const conn = create({ enabled: true });
+      const result = await conn.fetch();
+      expect((result.data.symbols as unknown[]).length).toBe(0);
+    });
+
+    it('should handle news response with missing news field', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        regularMarketPrice: 100,
+                        previousClose: 95,
+                        shortName: 'Test Co',
+                        currency: 'EUR',
+                        marketState: 'CLOSED',
+                      },
+                      indicators: { quote: [{ close: [90, 95, 100] }] },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          // Response ok but no news field
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({}),
+          });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['TEST'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      expect(symbols[0].news).toEqual([]);
+      expect(symbols[0].currency).toBe('EUR');
+    });
+
+    it('should handle single close value (no week change)', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: { result: [{ meta: { regularMarketPrice: 50, previousClose: 48 }, indicators: { quote: [{ close: [50] }] } }] },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.resolve({ ok: false });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['ONE'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      expect(symbols[0].weekChangePct).toBeNull();
+    });
+
+    it('should show hours for mid-range news age', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: { result: [{ meta: { regularMarketPrice: 100, previousClose: 99 }, indicators: { quote: [{ close: [99, 100] }] } }] },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                news: [{ title: 'Mid news', publisher: 'X', providerPublishTime: Math.floor(Date.now() / 1000) - 3600 * 5 }],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['MID'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      const news = symbols[0].news as { age: string }[];
+      expect(news[0].age).toBe('5h ago');
+    });
 
   describe('validate', () => {
     it('should pass with symbols configured', () => {

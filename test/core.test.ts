@@ -1242,4 +1242,403 @@ describe('runPipeline', () => {
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
   }, 60_000);
+
+  it('should handle corrupted memory files gracefully', async () => {
+    setupPipelineMocks();
+
+    // Override readFileSync to throw for memory files (covers line 134)
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      if (p.includes('memory_') && p.endsWith('.json')) throw new Error('corrupt JSON');
+      return '{}';
+    });
+    mockExistsSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('/memory')) return true;
+      return false;
+    });
+    mockReaddirSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('/memory')) return ['memory_2026-03-27.json'];
+      return [];
+    });
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await core.runPipeline({ ...pipelineConfig, printer: '' });
+    expect(result.brief).toBeDefined();
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle corrupted critique files gracefully', async () => {
+    setupPipelineMocks();
+
+    // Override readFileSync to throw for critique files (covers line 303)
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      if (p.includes('critique_') && p.endsWith('.json')) throw new Error('corrupt JSON');
+      return '{}';
+    });
+    mockExistsSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('/feedback')) return true;
+      if (p.includes('feedback.md')) return false;
+      return false;
+    });
+    mockReaddirSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('/feedback')) return ['critique_2026-03-27.json'];
+      return [];
+    });
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await core.runPipeline({ ...pipelineConfig, printer: '' });
+    expect(result.brief).toBeDefined();
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should throw when system prompt file is missing', async () => {
+    mockLoadConnectors.mockReturnValue({
+      connectors: [
+        {
+          name: 'weather',
+          description: 'Weather',
+          fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
+            source: 'weather',
+            description: 'Weather',
+            data: {},
+            priorityHint: 'low' as const,
+          }),
+        },
+      ],
+      initErrors: [],
+    });
+
+    // Make readFileSync throw for system.md (covers line 617)
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) throw new Error('ENOENT');
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    // loadPrompt is called before the try/catch, so it throws
+    await expect(
+      core.generateBrief(
+        { model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output' },
+        '{}',
+      ),
+    ).rejects.toThrow('System prompt not found');
+  });
+
+  it('should include auto-close context from yesterday in prompt', async () => {
+    const briefJson = JSON.stringify({ title: 'AutoClose Brief', sections: [] });
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(briefJson))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      if (p.includes(`closed_${yesterdayStr}.json`))
+        return JSON.stringify({
+          date: yesterdayStr,
+          closed: [
+            { task_id: '123', task_content: 'Pay bill', person: 'George', reason: 'Payment confirmed' },
+          ],
+        });
+      return '{}';
+    });
+
+    mockExistsSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('/auto_close')) return true;
+      if (p.includes(`closed_${yesterdayStr}.json`)) return true;
+      return false;
+    });
+    mockReaddirSync.mockReturnValue([]);
+
+    const config: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+    };
+
+    const brief = await core.generateBrief(config, '{}');
+    expect(brief.title).toBe('AutoClose Brief');
+
+    // The system prompt should contain auto-close context
+    const firstCall = mockMessagesCreate.mock.calls[0] as unknown[];
+    const opts = firstCall[0] as { system: string };
+    expect(opts.system).toContain('Auto-closed tasks');
+    expect(opts.system).toContain('Pay bill');
+  });
+
+  it('should include runtime errors in error brief', async () => {
+    // Add a runtime error before generating
+    core.runtimeErrors.add('test_pipeline', 'something broke', 'error');
+
+    mockLoadConnectors.mockReturnValue({
+      connectors: [
+        {
+          name: 'weather',
+          description: 'Weather',
+          fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
+            source: 'weather',
+            description: 'Weather',
+            data: {},
+            priorityHint: 'low' as const,
+          }),
+        },
+      ],
+      initErrors: [],
+    });
+
+    const nonRetryableError = Object.assign(new Error('Bad Request'), { status: 400 });
+    mockMessagesCreate.mockRejectedValue(nonRetryableError);
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(
+      { model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output' },
+      '{}',
+      [{ connector: 'gmail', error: 'auth expired' }],
+    );
+
+    expect(brief.subtitle).toContain('GENERATION FAILED');
+    const issuesSection = brief.sections.find((s) => s.heading === 'Issues During This Run');
+    expect(issuesSection).toBeDefined();
+    // Should contain both connector issue and runtime error
+    expect(issuesSection!.items!.some((i) => i.label === 'gmail')).toBe(true);
+    expect(issuesSection!.items!.some((i) => i.label === 'test_pipeline')).toBe(true);
+
+    consoleSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('should log self-critique issue count when issues found', async () => {
+    setupPipelineMocks();
+
+    // Clear and re-set mockMessagesCreate to return critique issues
+    mockMessagesCreate.mockReset();
+    mockMessagesCreate
+      .mockResolvedValueOnce(
+        mockApiResponse(JSON.stringify({
+          title: 'Critique Brief',
+          sections: [{ heading: 'Weather', body: 'Sunny.' }],
+        })),
+      )
+      .mockResolvedValueOnce(mockApiResponse('["insight"]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('["Too verbose", "Missing data"]')); // critique
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    await core.runPipeline({ ...pipelineConfig, printer: '' });
+
+    const logs = consoleSpy.mock.calls.map((c) => c[0] as string);
+    expect(logs.some((l) => l.includes('Self-critique: 2 issue(s)'))).toBe(true);
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should log "No tasks to auto-close" when detection returns empty', async () => {
+    const autoCloseConfig: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      auto_close_tasks: true,
+      connectors: { todoist: { accounts: [] } },
+    };
+
+    const briefJson = JSON.stringify({ title: 'No Close Brief', sections: [] });
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(briefJson)) // brief
+      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('[]')) // critique
+      .mockResolvedValueOnce(mockApiResponse('[]')); // auto-close detection (empty)
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(autoCloseConfig, '{}');
+    expect(brief.title).toBe('No Close Brief');
+
+    const logs = consoleSpy.mock.calls.map((c) => c[0] as string);
+    expect(logs.some((l) => l.includes('No tasks to auto-close'))).toBe(true);
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle auto-close detection API failure gracefully', async () => {
+    const autoCloseConfig: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      auto_close_tasks: true,
+      connectors: { todoist: { accounts: [] } },
+    };
+
+    const briefJson = JSON.stringify({ title: 'Detection Fail Brief', sections: [] });
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(briefJson)) // brief
+      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('[]')) // critique
+      .mockRejectedValueOnce(new Error('API timeout')); // auto-close detection fails
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(autoCloseConfig, '{}');
+    expect(brief.title).toBe('Detection Fail Brief');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle Todoist close API failure gracefully', async () => {
+    const autoCloseConfig: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      auto_close_tasks: true,
+      connectors: {
+        todoist: {
+          accounts: [{ name: 'George', token_env: 'TODOIST_TOKEN_GEORGE' }],
+        },
+      },
+    };
+
+    process.env.TODOIST_TOKEN_GEORGE = 'fake-token';
+
+    const briefJson = JSON.stringify({ title: 'Close Fail Brief', sections: [] });
+
+    const autoCloseRecs = JSON.stringify([
+      {
+        task_id: '999',
+        task_content: 'Close failing task',
+        person: 'George',
+        reason: 'Should be resolved',
+      },
+    ]);
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(briefJson))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse(autoCloseRecs));
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    // Mock fetch to throw a network error
+    const mockFetch = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockRejectedValue(new Error('Network error'));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const brief = await core.generateBrief(autoCloseConfig, '{}');
+      expect(brief.title).toBe('Close Fail Brief');
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.TODOIST_TOKEN_GEORGE;
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('should handle Todoist close API returning non-ok status', async () => {
+    const autoCloseConfig: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      auto_close_tasks: true,
+      connectors: {
+        todoist: {
+          accounts: [{ name: 'George', token_env: 'TODOIST_TOKEN_GEORGE' }],
+        },
+      },
+    };
+
+    process.env.TODOIST_TOKEN_GEORGE = 'fake-token';
+
+    const briefJson = JSON.stringify({ title: 'Non-ok Close Brief', sections: [] });
+
+    const autoCloseRecs = JSON.stringify([
+      {
+        task_id: '888',
+        task_content: 'Non-ok close task',
+        person: 'George',
+        reason: 'Should fail',
+      },
+    ]);
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(briefJson))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse(autoCloseRecs));
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'System prompt.';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    const mockFetch = jest.fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
+      .mockResolvedValue({ ok: false, status: 403 });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const brief = await core.generateBrief(autoCloseConfig, '{}');
+      expect(brief.title).toBe('Non-ok Close Brief');
+      // Should NOT save auto-close log since nothing was closed
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.TODOIST_TOKEN_GEORGE;
+      consoleSpy.mockRestore();
+    }
+  });
 });

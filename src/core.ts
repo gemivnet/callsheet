@@ -589,9 +589,11 @@ function buildAutoCloseContext(outputDir: string): string {
 
 // ---------------------------------------------------------------------------
 
-function buildConnectorIssuesContext(issues: ConnectorIssue[]): string {
-  const drainedErrors = runtimeErrors.drain();
-  if (!issues.length && !drainedErrors.length) return '';
+function buildConnectorIssuesContext(
+  issues: ConnectorIssue[],
+  errors: RuntimeError[] = [],
+): string {
+  if (!issues.length && !errors.length) return '';
 
   let ctx = '\n\n## Issues during this run\n\n';
   ctx +=
@@ -601,7 +603,7 @@ function buildConnectorIssuesContext(issues: ConnectorIssue[]): string {
   for (const issue of issues) {
     ctx += `- **${issue.connector}** (connector): ${issue.error}\n`;
   }
-  for (const err of drainedErrors) {
+  for (const err of errors) {
     ctx += `- **${err.source}** (${err.severity}): ${err.error}\n`;
   }
 
@@ -686,7 +688,11 @@ async function withRetry<T>(
 // Error brief — generated when the Claude API is completely unreachable
 // ---------------------------------------------------------------------------
 
-function buildErrorBrief(error: unknown, connectorIssues: ConnectorIssue[]): Brief {
+function buildErrorBrief(
+  error: unknown,
+  connectorIssues: ConnectorIssue[],
+  errors: RuntimeError[] = [],
+): Brief {
   const today = new Date();
   const dateStr = today.toLocaleDateString('en-US', {
     weekday: 'long',
@@ -697,7 +703,6 @@ function buildErrorBrief(error: unknown, connectorIssues: ConnectorIssue[]): Bri
 
   const errMsg = error instanceof Error ? error.message : String(error);
   const { status } = error as { status?: number };
-  const drainedErrors = runtimeErrors.drain();
 
   const sections: Brief['sections'] = [
     {
@@ -717,7 +722,7 @@ function buildErrorBrief(error: unknown, connectorIssues: ConnectorIssue[]): Bri
       note: issue.error,
       urgent: true,
     })),
-    ...drainedErrors.map((err) => ({
+    ...errors.map((err) => ({
       label: err.source,
       note: err.error,
       urgent: err.severity === 'error',
@@ -750,7 +755,9 @@ export async function generateBrief(
 
   const client = new Anthropic({ apiKey });
   const model = config.model ?? 'claude-sonnet-4-20250514';
-  const systemPrompt = loadPrompt(config) + buildConnectorIssuesContext(connectorIssues);
+  const drainedErrors = runtimeErrors.drain();
+  const systemPrompt =
+    loadPrompt(config) + buildConnectorIssuesContext(connectorIssues, drainedErrors);
 
   const today = new Date();
   const dateStr = today.toLocaleDateString('en-US', {
@@ -806,7 +813,7 @@ export async function generateBrief(
   } catch (e) {
     console.error(`  Brief generation failed: ${e}`);
     console.log('  Generating error brief with cached data...');
-    return buildErrorBrief(e, connectorIssues);
+    return buildErrorBrief(e, connectorIssues, drainedErrors);
   }
 
   // Save memory for future briefs

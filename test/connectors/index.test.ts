@@ -164,4 +164,52 @@ describe('loadConnectors', () => {
     });
     expect(connectors).toHaveLength(3);
   });
+
+  it('should report init errors when factory throws', async () => {
+    // Get the mocked weather module and make its factory throw
+    const weatherMock = await import('../../src/connectors/weather.js');
+    const createFn = weatherMock.create as jest.Mock;
+    createFn.mockImplementation(() => {
+      throw new Error('Missing required field: lat');
+    });
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const { connectors, initErrors } = loadConnectors({
+      connectors: {
+        weather: { enabled: true },
+      },
+    });
+
+    expect(connectors).toHaveLength(0);
+    expect(initErrors).toHaveLength(1);
+    expect(initErrors[0].connector).toBe('weather');
+    expect(initErrors[0].error).toContain('Init failed');
+    expect(initErrors[0].error).toContain('Missing required field: lat');
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to initialize connector 'weather'"),
+    );
+
+    logSpy.mockRestore();
+  });
+
+  it('should report init errors when factory throws a non-Error value', async () => {
+    const weatherMock = await import('../../src/connectors/weather.js');
+    const createFn = weatherMock.create as jest.Mock;
+    createFn.mockImplementation(() => {
+      throw 'string error';
+    });
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const { connectors, initErrors } = loadConnectors({
+      connectors: {
+        weather: { enabled: true },
+      },
+    });
+
+    expect(connectors).toHaveLength(0);
+    expect(initErrors).toHaveLength(1);
+    expect(initErrors[0].error).toContain('string error');
+
+    logSpy.mockRestore();
+  });
 });

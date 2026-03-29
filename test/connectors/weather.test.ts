@@ -150,6 +150,153 @@ describe('weather connector', () => {
       expect(result.description).toContain('alert');
     });
 
+    it('should format alert onset and expires dates', async () => {
+      mockFetch((url) => {
+        if (url.includes('/points/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                properties: { forecast: 'https://api.weather.gov/test/forecast' },
+              }),
+          });
+        }
+        if (url.includes('/forecast')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                properties: {
+                  periods: [
+                    {
+                      name: 'Today',
+                      temperature: 65,
+                      temperatureUnit: 'F',
+                      windSpeed: '10 mph',
+                      windDirection: 'SW',
+                      shortForecast: 'Cloudy',
+                      detailedForecast: 'Cloudy.',
+                      probabilityOfPrecipitation: null,
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (url.includes('/alerts/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                features: [
+                  {
+                    properties: {
+                      event: 'Winter Storm Warning',
+                      severity: 'Severe',
+                      urgency: 'Expected',
+                      headline: 'Winter Storm Warning until Friday',
+                      onset: '2026-03-28T06:00:00-05:00',
+                      expires: '2026-03-29T18:00:00-05:00',
+                    },
+                  },
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: false });
+      });
+
+      const conn = create(baseConfig);
+      const result = await conn.fetch();
+
+      const alerts = result.data.alerts as { onset: string | null; expires: string | null; event: string }[];
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0].event).toBe('Winter Storm Warning');
+      // onset and expires should be formatted strings, not null
+      expect(alerts[0].onset).not.toBeNull();
+      expect(typeof alerts[0].onset).toBe('string');
+      expect(alerts[0].expires).not.toBeNull();
+      expect(typeof alerts[0].expires).toBe('string');
+    });
+
+    it('should handle null precipitationChance', async () => {
+      mockFetch((url) => {
+        if (url.includes('/points/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                properties: { forecast: 'https://api.weather.gov/test/forecast' },
+              }),
+          });
+        }
+        if (url.includes('/forecast')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                properties: {
+                  periods: [
+                    {
+                      name: 'Today',
+                      temperature: 70,
+                      temperatureUnit: 'F',
+                      windSpeed: '5 mph',
+                      windDirection: 'N',
+                      shortForecast: 'Clear',
+                      detailedForecast: 'Clear skies.',
+                      // No probabilityOfPrecipitation key at all
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (url.includes('/alerts/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ features: [] }),
+          });
+        }
+        return Promise.resolve({ ok: false });
+      });
+
+      const conn = create(baseConfig);
+      const result = await conn.fetch();
+      const periods = result.data.periods as { precipitationChance: number | null }[];
+      expect(periods[0].precipitationChance).toBeNull();
+    });
+
+    it('should handle alerts API returning not ok', async () => {
+      mockFetch((url) => {
+        if (url.includes('/points/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                properties: { forecast: 'https://api.weather.gov/test/forecast' },
+              }),
+          });
+        }
+        if (url.includes('/forecast')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({ properties: { periods: [] } }),
+          });
+        }
+        if (url.includes('/alerts/')) {
+          return Promise.resolve({ ok: false, status: 500 });
+        }
+        return Promise.resolve({ ok: false });
+      });
+
+      const conn = create(baseConfig);
+      const result = await conn.fetch();
+      // Should still succeed with empty alerts
+      expect(result.data.alerts).toEqual([]);
+    });
+
     it('should throw on NWS points API error', async () => {
       mockFetch(() => Promise.resolve({ ok: false, status: 503 }));
 
