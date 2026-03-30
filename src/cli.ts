@@ -28,7 +28,10 @@ process.on('uncaughtException', (err) => {
     console.error(`[suppressed async error] ${msg}`);
     runtimeErrors.add('actual_budget (background)', msg);
   } else {
-    throw err; // re-throw unknown fatal errors
+    // Log and exit cleanly — re-throwing inside uncaughtException causes
+    // Node to abort immediately without running finally blocks.
+    console.error(`[fatal uncaught exception] ${err?.stack ?? msg}`);
+    process.exit(1);
   }
 });
 
