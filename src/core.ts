@@ -904,7 +904,15 @@ export async function runPipeline(
 
   // Generate
   console.log(`Generating brief via Claude (${config.model ?? 'claude-sonnet-4-20250514'})...`);
-  const brief = await generateBrief(config, dataPayload, connectorIssues);
+  let brief: Brief;
+  try {
+    brief = await generateBrief(config, dataPayload, connectorIssues);
+  } catch (e) {
+    // Safety net: if generateBrief throws despite its internal catch,
+    // still produce an error brief rather than crashing the whole pipeline.
+    console.error(`  Pipeline caught brief error: ${e}`);
+    brief = buildErrorBrief(e, connectorIssues, runtimeErrors.drain());
+  }
 
   const jsonPath = saveBrief(brief, outputDir);
   console.log(`  JSON: ${jsonPath}`);

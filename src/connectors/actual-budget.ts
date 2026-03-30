@@ -210,7 +210,15 @@ export function create(config: ConnectorConfig): Connector {
           priorityHint: 'normal',
         };
       } finally {
-        await api.shutdown();
+        // Give @actual-app/api background tasks (advanceSchedulesService) time
+        // to finish before shutdown nullifies the DB handle. Without this,
+        // deferred schedule queries crash with "Cannot read properties of null".
+        await new Promise((r) => setTimeout(r, 500));
+        try {
+          await api.shutdown();
+        } catch {
+          // Shutdown may fail if background tasks already closed the DB
+        }
         console.log = origLog;
         console.warn = origWarn;
         console.info = origInfo;
