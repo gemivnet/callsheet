@@ -76,6 +76,7 @@ export function create(config: ConnectorConfig): Connector {
     async fetch(): Promise<ConnectorResult> {
       const credsDir = (config.credentials_dir as string) ?? 'secrets';
       const lookahead = (config.lookahead_days as number) ?? 7;
+      const lookback = (config.lookback_days as number) ?? 0;
       const accounts = config.accounts as CalendarAccount[] | undefined;
 
       const today = new Date();
@@ -86,9 +87,12 @@ export function create(config: ConnectorConfig): Connector {
       tomorrow.setDate(tomorrow.getDate() + 1);
       const lookaheadEnd = new Date(today);
       lookaheadEnd.setDate(lookaheadEnd.getDate() + lookahead);
+      const lookbackStart = new Date(today);
+      lookbackStart.setDate(lookbackStart.getDate() - lookback);
 
       let allTodayEvents: CalendarEvent[] = [];
       let allUpcomingEvents: CalendarEvent[] = [];
+      let allRecentEvents: CalendarEvent[] = [];
 
       if (accounts && accounts.length > 0) {
         // Multi-account mode
@@ -116,6 +120,18 @@ export function create(config: ConnectorConfig): Connector {
 
           allTodayEvents.push(...todayEvents);
           allUpcomingEvents.push(...upcomingEvents);
+
+          if (lookback > 0) {
+            const recent = await fetchAccountEvents(
+              credsDir,
+              tokenFile,
+              calIds,
+              lookbackStart,
+              today,
+              credsFile,
+            );
+            allRecentEvents.push(...recent);
+          }
         }
       } else {
         // Legacy single-account mode
@@ -139,6 +155,16 @@ export function create(config: ConnectorConfig): Connector {
           lookaheadEnd,
           credsFile,
         );
+        if (lookback > 0) {
+          allRecentEvents = await fetchAccountEvents(
+            credsDir,
+            tokenFile,
+            calIds,
+            lookbackStart,
+            today,
+            credsFile,
+          );
+        }
       }
 
       // Deduplicate by event ID and sort chronologically
@@ -159,18 +185,27 @@ export function create(config: ConnectorConfig): Connector {
 
       const todayEvents = dedupeAndSort(allTodayEvents);
       const upcomingEvents = dedupeAndSort(allUpcomingEvents);
+      const recentEvents = dedupeAndSort(allRecentEvents);
+
+      const data: Record<string, unknown> = {
+        today: todayEvents.map(simplifyEvent),
+        upcoming: upcomingEvents.map(simplifyEvent),
+      };
+      if (lookback > 0) {
+        data.recent = recentEvents.map(simplifyEvent);
+      }
 
       return {
         source: 'google_calendar',
         description:
           `Google Calendar events. 'today' has ${todayEvents.length} events. ` +
           `'upcoming' has ${upcomingEvents.length} events over the next ${lookahead} days. ` +
+          (lookback > 0
+            ? `'recent' has ${recentEvents.length} events from the past ${lookback} days (for week-in-review). `
+            : '') +
           "Use today's events for the schedule section. Use upcoming for the lookahead section — " +
           'highlight things that need preparation.',
-        data: {
-          today: todayEvents.map(simplifyEvent),
-          upcoming: upcomingEvents.map(simplifyEvent),
-        },
+        data,
         priorityHint: 'high',
       };
     },

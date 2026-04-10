@@ -47,6 +47,13 @@ export interface CallsheetConfig {
   auto_close_tasks?: boolean;
   /** Per-connector deadline in milliseconds. Defaults to 60_000 (60s). */
   connector_timeout_ms?: number;
+  /**
+   * Day of the week (name like "saturday" or number 0-6 where 0=Sunday) to
+   * generate a Week in Review brief instead of the daily brief. Omit to
+   * disable. The Week in Review covers the trailing 7 days and uses
+   * `src/prompts/weekly.md` instead of `system.md`.
+   */
+  weekly_review_day?: string | number;
 }
 
 /** A task that Claude recommends closing based on resolution signals. */

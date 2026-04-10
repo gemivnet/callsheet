@@ -18,6 +18,14 @@ credentials_dir: secrets
 # stall the whole pipeline. Default: 60000 (60s).
 # connector_timeout_ms: 60000
 
+# Day of the week to generate a Week in Review brief instead of the daily one.
+# Accepts a day name (e.g. "saturday") or a number 0-6 (0=Sunday). Omit or
+# leave commented to disable. On the configured day the brief is *replaced*
+# (not added to) by a retrospective covering the trailing 7 days. The
+# google_calendar lookback is automatically bumped to 7 days on review days
+# so the retrospective has past events to reference.
+# weekly_review_day: saturday
+
 # ---------------------------------------------------------------------------
 # Connectors
 # ---------------------------------------------------------------------------

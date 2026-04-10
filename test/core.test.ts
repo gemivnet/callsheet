@@ -115,6 +115,182 @@ describe('stripJsonCodeFences', () => {
   });
 });
 
+describe('resolveWeeklyReviewDay', () => {
+  it('returns null for undefined', () => {
+    expect(core.resolveWeeklyReviewDay(undefined)).toBeNull();
+  });
+
+  it('returns the same number for a valid 0-6 input', () => {
+    expect(core.resolveWeeklyReviewDay(0)).toBe(0);
+    expect(core.resolveWeeklyReviewDay(6)).toBe(6);
+  });
+
+  it('returns null for out-of-range numbers', () => {
+    expect(core.resolveWeeklyReviewDay(7)).toBeNull();
+    expect(core.resolveWeeklyReviewDay(-1)).toBeNull();
+  });
+
+  it('parses lowercase day names', () => {
+    expect(core.resolveWeeklyReviewDay('sunday')).toBe(0);
+    expect(core.resolveWeeklyReviewDay('saturday')).toBe(6);
+  });
+
+  it('is case-insensitive and tolerates whitespace', () => {
+    expect(core.resolveWeeklyReviewDay('  Saturday  ')).toBe(6);
+    expect(core.resolveWeeklyReviewDay('THURSDAY')).toBe(4);
+  });
+
+  it('returns null for unrecognized strings', () => {
+    expect(core.resolveWeeklyReviewDay('funday')).toBeNull();
+  });
+});
+
+describe('isWeeklyReviewDay', () => {
+  it('returns false when no weekly_review_day is configured', () => {
+    expect(core.isWeeklyReviewDay({}, new Date('2026-04-11T12:00:00'))).toBe(false);
+  });
+
+  it('returns true when today matches the configured day name', () => {
+    // 2026-04-11 is a Saturday in local time
+    const sat = new Date(2026, 3, 11, 12, 0, 0);
+    expect(core.isWeeklyReviewDay({ weekly_review_day: 'saturday' }, sat)).toBe(true);
+  });
+
+  it('returns false when today does not match the configured day', () => {
+    const fri = new Date(2026, 3, 10, 12, 0, 0);
+    expect(core.isWeeklyReviewDay({ weekly_review_day: 'saturday' }, fri)).toBe(false);
+  });
+
+  it('accepts numeric day-of-week', () => {
+    const sat = new Date(2026, 3, 11, 12, 0, 0);
+    expect(core.isWeeklyReviewDay({ weekly_review_day: 6 }, sat)).toBe(true);
+  });
+});
+
+describe('withWeeklyReviewOverrides', () => {
+  it('returns the input unchanged when not a review day', () => {
+    const cfg: CallsheetConfig = {
+      weekly_review_day: 'saturday',
+      connectors: { google_calendar: { enabled: true, lookback_days: 0 } },
+    };
+    // Force a non-Saturday by using Friday 2026-04-10
+    const realDate = Date;
+    const fixedNow = new realDate(2026, 3, 10, 12, 0, 0);
+    const SpyDate = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(fixedNow);
+          return;
+        }
+        // @ts-expect-error spread into Date ctor
+        super(...args);
+      }
+      static now() {
+        return fixedNow.getTime();
+      }
+    } as DateConstructor;
+    global.Date = SpyDate;
+    try {
+      expect(core.withWeeklyReviewOverrides(cfg)).toBe(cfg);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it('bumps calendar lookback to 7 on review days when calendar is enabled', () => {
+    const cfg: CallsheetConfig = {
+      weekly_review_day: 'saturday',
+      connectors: {
+        google_calendar: { enabled: true, lookback_days: 0 },
+        weather: { enabled: true },
+      },
+    };
+    const realDate = Date;
+    const sat = new realDate(2026, 3, 11, 12, 0, 0);
+    const SpyDate = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(sat);
+          return;
+        }
+        // @ts-expect-error spread into Date ctor
+        super(...args);
+      }
+      static now() {
+        return sat.getTime();
+      }
+    } as DateConstructor;
+    global.Date = SpyDate;
+    try {
+      const out = core.withWeeklyReviewOverrides(cfg);
+      expect(out).not.toBe(cfg);
+      expect(out.connectors?.google_calendar?.lookback_days).toBe(7);
+      // Other connectors are untouched
+      expect(out.connectors?.weather).toEqual({ enabled: true });
+      // Original is not mutated
+      expect(cfg.connectors?.google_calendar?.lookback_days).toBe(0);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it('does not bump lookback when calendar is disabled', () => {
+    const cfg: CallsheetConfig = {
+      weekly_review_day: 'saturday',
+      connectors: { google_calendar: { enabled: false, lookback_days: 0 } },
+    };
+    const realDate = Date;
+    const sat = new realDate(2026, 3, 11, 12, 0, 0);
+    const SpyDate = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(sat);
+          return;
+        }
+        // @ts-expect-error spread into Date ctor
+        super(...args);
+      }
+      static now() {
+        return sat.getTime();
+      }
+    } as DateConstructor;
+    global.Date = SpyDate;
+    try {
+      expect(core.withWeeklyReviewOverrides(cfg)).toBe(cfg);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it('preserves an existing larger lookback', () => {
+    const cfg: CallsheetConfig = {
+      weekly_review_day: 'saturday',
+      connectors: { google_calendar: { enabled: true, lookback_days: 14 } },
+    };
+    const realDate = Date;
+    const sat = new realDate(2026, 3, 11, 12, 0, 0);
+    const SpyDate = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(sat);
+          return;
+        }
+        // @ts-expect-error spread into Date ctor
+        super(...args);
+      }
+      static now() {
+        return sat.getTime();
+      }
+    } as DateConstructor;
+    global.Date = SpyDate;
+    try {
+      expect(core.withWeeklyReviewOverrides(cfg)).toBe(cfg);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+});
+
 describe('loadConfig', () => {
   it('should load and parse a config file', () => {
     const mockConfig = JSON.stringify({
@@ -671,6 +847,65 @@ describe('generateBrief', () => {
     await expect(core.generateBrief(minimalConfig, '{}')).rejects.toThrow(
       'ANTHROPIC_API_KEY not set',
     );
+  });
+
+  it('should load weekly.md and use review framing on weekly_review_day', async () => {
+    const briefJson = JSON.stringify({
+      title: 'Week in Review — Apr 5–11, 2026',
+      sections: [],
+    });
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(briefJson))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
+
+    const readPaths: string[] = [];
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      readPaths.push(p);
+      if (p.includes('weekly.md')) return 'Week in Review prompt';
+      if (p.includes('system.md')) return 'Daily prompt';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    // Pin "now" to a Saturday (2026-04-11)
+    const realDate = Date;
+    const sat = new realDate(2026, 3, 11, 9, 0, 0);
+    const SpyDate = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(sat);
+          return;
+        }
+        // @ts-expect-error spread into Date ctor
+        super(...args);
+      }
+      static now() {
+        return sat.getTime();
+      }
+    } as DateConstructor;
+    global.Date = SpyDate;
+
+    try {
+      await core.generateBrief(
+        { ...minimalConfig, weekly_review_day: 'saturday' },
+        '{"data":"test"}',
+      );
+    } finally {
+      global.Date = realDate;
+    }
+
+    // Confirm weekly.md was read and system.md was NOT
+    expect(readPaths.some((p) => p.endsWith('weekly.md'))).toBe(true);
+    expect(readPaths.some((p) => p.endsWith('system.md'))).toBe(false);
+
+    // Confirm the user message contains the Week in Review framing
+    const firstCall = mockMessagesCreate.mock.calls[0] as unknown[];
+    const opts = firstCall[0] as { messages: { content: string }[] };
+    expect(opts.messages[0].content).toContain('Week in Review');
   });
 
   it('should include connector issues in context', async () => {
@@ -1502,7 +1737,7 @@ describe('runPipeline', () => {
         { model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output' },
         '{}',
       ),
-    ).rejects.toThrow('System prompt not found');
+    ).rejects.toThrow('Prompt not found');
   });
 
   it('should include auto-close context from yesterday in prompt', async () => {

@@ -80,6 +80,38 @@ export interface ConnectorIssue {
 /** Default per-connector deadline. Connectors that hang past this are abandoned. */
 const DEFAULT_CONNECTOR_TIMEOUT_MS = 60_000;
 
+/** Lookback window the Week in Review needs from the calendar connector. */
+const WEEKLY_REVIEW_LOOKBACK_DAYS = 7;
+
+/**
+ * On Week in Review days, return a shallow-cloned config with the calendar
+ * connector's `lookback_days` bumped to at least 7 so the retrospective has
+ * past events to reference. On non-review days, returns the input as-is.
+ *
+ * Never mutates the caller's config object.
+ */
+export function withWeeklyReviewOverrides(config: CallsheetConfig): CallsheetConfig {
+  if (!isWeeklyReviewDay(config)) return config;
+
+  const connectors = config.connectors ?? {};
+  const calendar = connectors.google_calendar;
+  if (!calendar?.enabled) return config;
+
+  const currentLookback = (calendar.lookback_days as number | undefined) ?? 0;
+  if (currentLookback >= WEEKLY_REVIEW_LOOKBACK_DAYS) return config;
+
+  return {
+    ...config,
+    connectors: {
+      ...connectors,
+      google_calendar: {
+        ...calendar,
+        lookback_days: WEEKLY_REVIEW_LOOKBACK_DAYS,
+      },
+    },
+  };
+}
+
 /** Wrap a promise so it rejects with a clear timeout error after `ms` milliseconds. */
 function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -102,7 +134,11 @@ function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 export async function fetchAll(
   config: CallsheetConfig,
 ): Promise<{ results: ConnectorResult[]; issues: ConnectorIssue[] }> {
-  const { connectors, initErrors } = loadConnectors(config as Record<string, unknown>);
+  // On Week in Review days, ensure the calendar connector has at least a
+  // 7-day lookback so the retrospective has past events to reference. Done as
+  // a per-run override on a shallow clone — never mutate the caller's config.
+  const effectiveConfig = withWeeklyReviewOverrides(config);
+  const { connectors, initErrors } = loadConnectors(effectiveConfig as Record<string, unknown>);
   const results: ConnectorResult[] = [];
   const issues: ConnectorIssue[] = [];
 
@@ -111,8 +147,7 @@ export async function fetchAll(
     issues.push({ connector: err.connector, error: err.error });
   }
 
-  const timeoutMs =
-    (config.connector_timeout_ms) ?? DEFAULT_CONNECTOR_TIMEOUT_MS;
+  const timeoutMs = config.connector_timeout_ms ?? DEFAULT_CONNECTOR_TIMEOUT_MS;
 
   // Fire all connector fetches in parallel. Each is wrapped in a deadline so a
   // single hanging connector cannot stall the brief. Promise.allSettled ensures
@@ -137,7 +172,7 @@ export async function fetchAll(
 
   for (let i = 0; i < settled.length; i++) {
     const outcome = settled[i];
-    const {name} = connectors[i];
+    const { name } = connectors[i];
     if (outcome.status === 'fulfilled') {
       results.push(outcome.value);
     } else {
@@ -659,13 +694,39 @@ function buildConnectorIssuesContext(
   return ctx;
 }
 
+/**
+ * Resolve a `weekly_review_day` config value to a day-of-week number (0-6,
+ * Sunday=0). Accepts both string names ("saturday", case-insensitive) and
+ * numbers. Returns null if the value is missing or unparseable.
+ */
+export function resolveWeeklyReviewDay(value: string | number | undefined): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 0 && value <= 6 ? value : null;
+  }
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const idx = days.indexOf(value.trim().toLowerCase());
+  return idx === -1 ? null : idx;
+}
+
+/**
+ * Whether today is the configured weekly-review day. Centralized so the
+ * prompt selection and the user message stay in sync.
+ */
+export function isWeeklyReviewDay(config: CallsheetConfig, now: Date = new Date()): boolean {
+  const target = resolveWeeklyReviewDay(config.weekly_review_day);
+  return target !== null && now.getDay() === target;
+}
+
 function loadPrompt(config: CallsheetConfig): string {
-  const promptPath = join(__dirname, 'prompts', 'system.md');
+  const weekly = isWeeklyReviewDay(config);
+  const promptFile = weekly ? 'weekly.md' : 'system.md';
+  const promptPath = join(__dirname, 'prompts', promptFile);
   let prompt: string;
   try {
     prompt = readFileSync(promptPath, 'utf-8');
   } catch {
-    throw new Error(`System prompt not found: ${promptPath}`);
+    throw new Error(`Prompt not found: ${promptPath}`);
   }
 
   const context = config.context ?? {};
@@ -815,10 +876,12 @@ export async function generateBrief(
     month: 'long',
     day: 'numeric',
   });
+  const weekly = isWeeklyReviewDay(config, today);
 
-  // Load previous brief for diff context
+  // Load previous brief for diff context (daily mode only — Week in Review is
+  // its own retrospective and doesn't compare against yesterday's brief).
   const outputDir = config.output_dir ?? 'output';
-  const prevBrief = loadPreviousBrief(outputDir);
+  const prevBrief = weekly ? null : loadPreviousBrief(outputDir);
   const diffContext = prevBrief ? buildDiffContext(prevBrief) : '';
 
   let brief: Brief;
@@ -835,11 +898,18 @@ export async function generateBrief(
               role: 'user',
               content:
                 `Today is ${dateStr}.\n\n` +
+                (weekly
+                  ? 'This is a **Week in Review** run — generate the weekly retrospective ' +
+                    'covering the trailing 7 days (today and the 6 prior), per the schema in ' +
+                    'the system prompt.\n\n'
+                  : '') +
                 'Here is all available data from the connected sources:\n' +
                 `<data>\n${dataPayload}\n</data>\n` +
                 diffContext +
                 '\n' +
-                'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
+                (weekly
+                  ? 'Generate the Week in Review JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.'
+                  : 'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.'),
             },
           ],
         }),
