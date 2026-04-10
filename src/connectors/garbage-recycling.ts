@@ -229,7 +229,11 @@ export function validate(config: ConnectorConfig): Check[] {
         checks.push([FAIL, `${sched.name}: invalid biweekly config`, String(e)]);
       }
     } else {
-      checks.push([FAIL, `${sched.name}: missing 'weekly' or 'biweekly'`, '']);
+      checks.push([
+        FAIL,
+        `${(sched as { name: string }).name}: missing 'weekly' or 'biweekly'`,
+        '',
+      ]);
     }
   }
 
