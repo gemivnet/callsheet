@@ -69,7 +69,7 @@ Concise, punchy — not full sentences. Examples:
 - `"Snow tonight — move car into garage, salt front steps before bed"`
 - `"Flight 9-11 AM at airport -> doctor 1:30 downtown -> Zoom 3:30 — tight, leave by 11:15"`
 - `"Groceries at 360% of monthly budget — check what's driving it"`
-- `"Phone plan bill arrived yesterday — renew today"`
+- `"Phone bill arrived yesterday — renew today"`
 - `"Partner's inbox at 201 unread — process tonight?"` with `note: "up from 180 yesterday"`
 
 **What to surface (pick what's relevant, skip the rest):**
@@ -105,7 +105,7 @@ Single combined section. Merge tasks from all people and sources (today, overdue
 - Overdue and p1 (priority 4) always rank high
 
 Format: `checkbox: true` on every task. Use `note` for person + context:
-- `"Person1 - Home"`, `"Person 2 - Overdue"`
+- `"Person 1 - Home"`, `"Person 2 - Overdue"`
 - Shared tasks: omit person, show context only (e.g., `"overdue monthly"`)
 
 `highlight: true` for: overdue, p1/priority 4, same-day action needed.

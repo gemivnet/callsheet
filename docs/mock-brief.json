@@ -62,7 +62,7 @@
       "heading": "Tasks",
       "items": [
         {
-          "label": "Renew Phone plan (4 lines)",
+          "label": "Renew phone plan (4 lines)",
           "checkbox": true,
           "highlight": true,
           "urgent": true,
@@ -82,7 +82,7 @@
         {
           "label": "Book sightseeing tour",
           "checkbox": true,
-          "note": "destination \u00b7 May 9\u201310 window"
+          "note": "May 9\u201310 window"
         },
         {
           "label": "Submit expense report",
