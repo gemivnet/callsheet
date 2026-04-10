@@ -45,6 +45,14 @@ const baseConfig = {
   password: 'secret',
 };
 
+// Compute dates relative to "today" so test transactions always fall inside
+// the current 7-day window regardless of when the suite runs.
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
 function resetMocks() {
   jest.clearAllMocks();
   mockGetAccounts.mockResolvedValue([
@@ -59,9 +67,9 @@ function resetMocks() {
     { id: 'pay2', name: 'Employer Inc' },
   ]);
   mockGetTransactions.mockResolvedValue([
-    { id: 'tx1', date: '2026-03-27', amount: -5000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: 'weekly shop' },
-    { id: 'tx2', date: '2026-03-28', amount: -2500, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
-    { id: 'tx3', date: '2026-03-26', amount: 100000, payee: 'pay2', category: '', account: 'acct1', notes: 'paycheck' },
+    { id: 'tx1', date: daysAgo(2), amount: -5000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: 'weekly shop' },
+    { id: 'tx2', date: daysAgo(1), amount: -2500, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
+    { id: 'tx3', date: daysAgo(3), amount: 100000, payee: 'pay2', category: '', account: 'acct1', notes: 'paycheck' },
   ]);
   mockGetBudgetMonth.mockResolvedValue({
     categoryGroups: [
@@ -181,9 +189,9 @@ describe('actual-budget connector', () => {
 
       const data = result.data as Record<string, unknown>;
       const txns = data.recentTransactions as { date: string }[];
-      expect(txns[0].date).toBe('2026-03-28');
-      expect(txns[1].date).toBe('2026-03-27');
-      expect(txns[2].date).toBe('2026-03-26');
+      expect(txns[0].date).toBe(daysAgo(1));
+      expect(txns[1].date).toBe(daysAgo(2));
+      expect(txns[2].date).toBe(daysAgo(3));
     });
 
     it('should generate over_budget alert when pctUsed >= 1.0', async () => {
@@ -403,7 +411,7 @@ describe('actual-budget connector', () => {
 
     it('should fall back to raw IDs when lookup maps have no match', async () => {
       mockGetTransactions.mockResolvedValue([
-        { id: 'tx1', date: '2026-03-27', amount: -5000, payee: 'unknown-payee', category: 'unknown-cat', account: 'acct1', notes: '' },
+        { id: 'tx1', date: daysAgo(2), amount: -5000, payee: 'unknown-payee', category: 'unknown-cat', account: 'acct1', notes: '' },
       ]);
 
       const connector = create(baseConfig);
@@ -418,7 +426,7 @@ describe('actual-budget connector', () => {
     it('should cap recentTransactions at 30', async () => {
       const manyTxns = Array.from({ length: 50 }, (_, i) => ({
         id: `tx${i}`,
-        date: '2026-03-27',
+        date: daysAgo(2),
         amount: -100,
         payee: 'pay1',
         category: 'cat1',
@@ -455,22 +463,14 @@ describe('actual-budget connector', () => {
       expect(alerts.length).toBe(0);
     });
 
-    it('should include budget alert count in description when alerts exist', async () => {
-      mockGetBudgetMonth.mockResolvedValue({
-        categoryGroups: [
-          {
-            name: 'Food',
-            categories: [
-              { name: 'Groceries', budgeted: 5000, spent: -6000, balance: -1000 },
-            ],
-          },
-        ],
-      });
-
+    it('should emphasize trends over absolute budget percentages in description', async () => {
       const connector = create(baseConfig);
       const result = await connector.fetch();
 
-      expect(result.description).toContain('1 budget alert(s)');
+      // The description should steer Claude toward trends, not toward
+      // surfacing raw "X% over budget" percentages.
+      expect(result.description).toContain('TRENDS');
+      expect(result.description).toContain('weekOverWeekByCategory');
     });
 
     it('should fall back to empty string when password_env references unset var', async () => {
@@ -511,7 +511,7 @@ describe('actual-budget connector', () => {
 
     it('should handle null/undefined payee, category, and notes in transactions', async () => {
       mockGetTransactions.mockResolvedValue([
-        { id: 'tx1', date: '2026-03-27', amount: -1000, payee: null, category: null, account: 'acct1', notes: null },
+        { id: 'tx1', date: daysAgo(2), amount: -1000, payee: null, category: null, account: 'acct1', notes: null },
       ]);
 
       const connector = create(baseConfig);
@@ -577,7 +577,7 @@ describe('actual-budget connector', () => {
         { id: 'acct1', name: 'Checking' },
       ]);
       mockGetTransactions.mockResolvedValue([
-        { id: 'tx1', date: '2026-03-27', amount: -1000, payee: 'pay1', category: 'cat1', account: 'unknown-acct', notes: '' },
+        { id: 'tx1', date: daysAgo(2), amount: -1000, payee: 'pay1', category: 'cat1', account: 'unknown-acct', notes: '' },
       ]);
 
       const connector = create(baseConfig);
@@ -618,6 +618,115 @@ describe('actual-budget connector', () => {
         password: 'envpassword',
       });
       delete process.env.TEST_ACTUAL_PW;
+    });
+  });
+
+  // ============================
+  // weekOverWeekByCategory tests
+  // ============================
+  describe('weekOverWeekByCategory', () => {
+    beforeEach(() => {
+      resetMocks();
+    });
+
+    it('should compute current vs previous 7-day spending per category', async () => {
+      // Two distinct weeks of Flying spending: $200 last week, $1000 this week.
+      mockGetTransactions.mockResolvedValue([
+        // Current period (0-7 days ago)
+        { id: 't1', date: daysAgo(1), amount: -50000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        { id: 't2', date: daysAgo(3), amount: -50000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        // Previous period (7-14 days ago)
+        { id: 't3', date: daysAgo(9), amount: -10000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        { id: 't4', date: daysAgo(12), amount: -10000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+      ]);
+
+      const connector = create(baseConfig);
+      const result = await connector.fetch();
+
+      const data = result.data as Record<string, unknown>;
+      const wow = data.weekOverWeekByCategory as Record<string, unknown>[];
+      const grocery = wow.find((c) => c.category === 'Groceries');
+      expect(grocery).toBeDefined();
+      expect(grocery!.currentWeek).toBe(1000);
+      expect(grocery!.previousWeek).toBe(200);
+      expect(grocery!.change).toBe(800);
+      expect(grocery!.pctChange).toBe(400); // 800 / 200 * 100
+    });
+
+    it('should sort weekOverWeekByCategory by absolute change descending', async () => {
+      mockGetTransactions.mockResolvedValue([
+        // Big jump in Groceries (cat1): 0 -> 1000
+        { id: 't1', date: daysAgo(1), amount: -100000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        // Small drop in Dining (cat2): 50 -> 10
+        { id: 't2', date: daysAgo(2), amount: -1000, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
+        { id: 't3', date: daysAgo(9), amount: -5000, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
+      ]);
+
+      const connector = create(baseConfig);
+      const result = await connector.fetch();
+
+      const data = result.data as Record<string, unknown>;
+      const wow = data.weekOverWeekByCategory as { category: string; change: number }[];
+      // Groceries change: +1000, Dining change: -40 → Groceries first
+      expect(wow[0].category).toBe('Groceries');
+      expect(Math.abs(wow[0].change)).toBeGreaterThanOrEqual(Math.abs(wow[1].change));
+    });
+
+    it('should report pctChange as null when previousWeek is zero', async () => {
+      mockGetTransactions.mockResolvedValue([
+        // Only current-period spending in Groceries; no previous-period baseline
+        { id: 't1', date: daysAgo(2), amount: -10000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+      ]);
+
+      const connector = create(baseConfig);
+      const result = await connector.fetch();
+
+      const data = result.data as Record<string, unknown>;
+      const wow = data.weekOverWeekByCategory as Record<string, unknown>[];
+      const grocery = wow.find((c) => c.category === 'Groceries');
+      expect(grocery).toBeDefined();
+      expect(grocery!.previousWeek).toBe(0);
+      expect(grocery!.currentWeek).toBe(100);
+      expect(grocery!.pctChange).toBeNull();
+    });
+
+    it('should cap weekOverWeekByCategory at 8 entries', async () => {
+      // 10 distinct categories all with non-zero current-period spending
+      const txns = Array.from({ length: 10 }, (_, i) => ({
+        id: `t${i}`,
+        date: daysAgo(2),
+        amount: -((i + 1) * 1000),
+        payee: 'pay1',
+        category: `cat${i}`,
+        account: 'acct1',
+        notes: '',
+      }));
+      mockGetCategories.mockResolvedValue(
+        Array.from({ length: 10 }, (_, i) => ({ id: `cat${i}`, name: `Category${i}` })),
+      );
+      mockGetTransactions.mockResolvedValue(txns);
+
+      const connector = create(baseConfig);
+      const result = await connector.fetch();
+
+      const data = result.data as Record<string, unknown>;
+      const wow = data.weekOverWeekByCategory as unknown[];
+      expect(wow.length).toBe(8);
+    });
+
+    it('should exclude income (positive amounts) from weekOverWeekByCategory', async () => {
+      mockGetTransactions.mockResolvedValue([
+        // Income should not appear in spending trends
+        { id: 't1', date: daysAgo(1), amount: 100000, payee: 'pay2', category: 'cat1', account: 'acct1', notes: 'paycheck' },
+      ]);
+
+      const connector = create(baseConfig);
+      const result = await connector.fetch();
+
+      const data = result.data as Record<string, unknown>;
+      const wow = data.weekOverWeekByCategory as Record<string, unknown>[];
+      // No spending in any category, so the array should be empty
+      expect(wow.length).toBe(0);
     });
   });
 });

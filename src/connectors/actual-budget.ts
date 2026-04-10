@@ -65,20 +65,27 @@ export function create(config: ConnectorConfig): Connector {
           payees.map((p: { id: string; name: string }) => [p.id, p.name]),
         );
 
-        // Date range: last N days
+        // Date range: fetch a 2x window so we can compute week-over-week trends.
+        // `lookbackDays` controls what's exposed in `recentTransactions`; the
+        // trend window is always lookbackDays * 2 (default 14d) and is used
+        // only for computing weekOverWeekByCategory.
         const endDate = new Date();
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - lookbackDays);
+        const trendStartDate = new Date();
+        trendStartDate.setDate(trendStartDate.getDate() - lookbackDays * 2);
+        const previousWindowEnd = new Date(startDate);
 
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
-        // Fetch transactions across all accounts
+        // Fetch transactions across all accounts (full trend window)
         const allTransactions: Record<string, unknown>[] = [];
+        const previousPeriodTransactions: Record<string, unknown>[] = [];
         for (const account of accounts) {
           const acct = account as { id: string; name: string; closed?: boolean };
           if (acct.closed) continue;
 
-          const txns = await api.getTransactions(acct.id, fmt(startDate), fmt(endDate));
+          const txns = await api.getTransactions(acct.id, fmt(trendStartDate), fmt(endDate));
 
           for (const t of txns as {
             id: string;
@@ -89,21 +96,27 @@ export function create(config: ConnectorConfig): Connector {
             notes: string;
             account: string;
           }[]) {
-            allTransactions.push({
+            const txn = {
               date: t.date,
               amount: api.utils.integerToAmount(t.amount),
               payee: payeeMap.get(t.payee) ?? t.payee ?? '',
               category: categoryMap.get(t.category) ?? t.category ?? 'Uncategorized',
               account: accountMap.get(t.account) ?? acct.name,
               notes: t.notes ?? '',
-            });
+            };
+            // Bucket into current vs previous period for trend computation
+            if (t.date >= fmt(startDate)) {
+              allTransactions.push(txn);
+            } else if (t.date >= fmt(trendStartDate) && t.date < fmt(previousWindowEnd)) {
+              previousPeriodTransactions.push(txn);
+            }
           }
         }
 
         // Sort by date descending
         allTransactions.sort((a, b) => (b.date as string).localeCompare(a.date as string));
 
-        // Compute spending summary by category
+        // Compute spending summary by category (current period only)
         const categoryTotals = new Map<string, number>();
         for (const t of allTransactions) {
           const amt = t.amount as number;
@@ -112,6 +125,35 @@ export function create(config: ConnectorConfig): Connector {
             categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + Math.abs(amt));
           }
         }
+
+        // Compute previous-period spending by category for week-over-week trends
+        const previousCategoryTotals = new Map<string, number>();
+        for (const t of previousPeriodTransactions) {
+          const amt = t.amount as number;
+          if (amt < 0) {
+            const cat = t.category as string;
+            previousCategoryTotals.set(cat, (previousCategoryTotals.get(cat) ?? 0) + Math.abs(amt));
+          }
+        }
+
+        // Build week-over-week comparison: union of categories from both periods,
+        // sorted by absolute dollar change descending. Capped to top 8 movers.
+        const allCategoryNames = new Set<string>([
+          ...categoryTotals.keys(),
+          ...previousCategoryTotals.keys(),
+        ]);
+        const round = (n: number) => Math.round(n * 100) / 100;
+        const weekOverWeekByCategory = [...allCategoryNames]
+          .map((category) => {
+            const currentWeek = round(categoryTotals.get(category) ?? 0);
+            const previousWeek = round(previousCategoryTotals.get(category) ?? 0);
+            const change = round(currentWeek - previousWeek);
+            // pctChange is null when there's no previous-week baseline to compare against
+            const pctChange = previousWeek > 0 ? Math.round((change / previousWeek) * 100) : null;
+            return { category, currentWeek, previousWeek, change, pctChange };
+          })
+          .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+          .slice(0, 8);
 
         const spendingByCategory = [...categoryTotals.entries()]
           .sort((a, b) => b[1] - a[1])
@@ -188,14 +230,13 @@ export function create(config: ConnectorConfig): Connector {
           description:
             `Actual Budget: ${allTransactions.length} transactions over the last ${lookbackDays} days. ` +
             `Total spending: $${Math.round(totalSpent * 100) / 100}, Total income: $${Math.round(totalIncome * 100) / 100}. ` +
-            (budgetAlerts.length
-              ? `${budgetAlerts.length} budget alert(s) — categories over or on pace to exceed their monthly budget. `
-              : '') +
-            'Use this data to flag notable spending patterns, large purchases, upcoming bills, ' +
-            'or anything that connects to calendar events or tasks. ' +
-            "Budget alerts with status 'over_budget' are URGENT — surface them prominently. " +
-            "Alerts with 'on_pace_to_exceed' are warnings — mention if relevant. " +
-            "Mention spending insights only if they're genuinely useful — don't list every transaction.",
+            "**Focus on TRENDS, not absolute budget percentages** — many of this household's " +
+            '"budget" categories are aspirational tracking buckets, not real spending caps, so ' +
+            '"X% over budget" is usually noise. Use `weekOverWeekByCategory` to flag real anomalies: ' +
+            'a category that jumped meaningfully week-over-week, an unusually large single transaction, ' +
+            'or spending that connects to a calendar event/task. Mention `budgetAlerts` only when a ' +
+            'category is BOTH over and unusually elevated relative to last week. ' +
+            "Don't list every transaction.",
           data: {
             summary: {
               totalSpent: Math.round(totalSpent * 100) / 100,
@@ -204,6 +245,7 @@ export function create(config: ConnectorConfig): Connector {
               transactionCount: allTransactions.length,
             },
             spendingByCategory,
+            weekOverWeekByCategory,
             budgetAlerts,
             recentTransactions: allTransactions.slice(0, 30),
           },
