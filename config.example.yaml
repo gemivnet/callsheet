@@ -88,6 +88,19 @@ connectors:
     symbols:
       - VTSAX
 
+  garbage_recycling:
+    enabled: false
+    lookahead_days: 7
+    schedules:
+      # Weekly: same day every week
+      - name: Garbage
+        weekly: thursday
+      # Biweekly: every other week, anchored to a known pickup date
+      - name: Recycling
+        biweekly:
+          day: tuesday
+          anchor: "2026-04-21"   # any known recycling pickup date
+
 # ---------------------------------------------------------------------------
 # Household context
 # ---------------------------------------------------------------------------

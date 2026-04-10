@@ -28,6 +28,10 @@ import {
   validate as validateHomeAssistant,
 } from './home-assistant.js';
 import { create as createActualBudget, validate as validateActualBudget } from './actual-budget.js';
+import {
+  create as createGarbageRecycling,
+  validate as validateGarbageRecycling,
+} from './garbage-recycling.js';
 
 export interface ConnectorEntry {
   factory: ConnectorFactory;
@@ -70,6 +74,7 @@ const registry = new Map<string, ConnectorEntry>([
   ['market', { factory: createMarket, validate: validateMarket }],
   ['home_assistant', { factory: createHomeAssistant, validate: validateHomeAssistant }],
   ['actual_budget', { factory: createActualBudget, validate: validateActualBudget }],
+  ['garbage_recycling', { factory: createGarbageRecycling, validate: validateGarbageRecycling }],
 ]);
 
 export function getRegistry(): Map<string, ConnectorEntry> {
