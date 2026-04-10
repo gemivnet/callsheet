@@ -49,6 +49,19 @@ class RuntimeErrorCollector {
 
 export const runtimeErrors = new RuntimeErrorCollector();
 
+/**
+ * Strip Markdown code fences from a string before JSON.parse.
+ *
+ * Claude sometimes wraps JSON output in ```json ... ``` even when told not to.
+ * Handles both fenced (```json\n{...}\n```) and bare-fenced (```\n{...}\n```)
+ * variants. Returns the input unchanged if no fences are present.
+ */
+export function stripJsonCodeFences(text: string): string {
+  const trimmed = text.trim();
+  const fenceMatch = /^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/.exec(trimmed);
+  return fenceMatch ? fenceMatch[1].trim() : trimmed;
+}
+
 export function loadConfig(configPath: string): CallsheetConfig {
   try {
     return yaml.load(readFileSync(configPath, 'utf-8')) as CallsheetConfig;
@@ -210,12 +223,7 @@ async function generateMemoryInsights(
 
     logUsage(outputDir, model, 'memory', response.usage.input_tokens, response.usage.output_tokens);
 
-    let text = (response.content[0] as { type: 'text'; text: string }).text.trim();
-    // Strip code fences (```json ... ``` or ``` ... ```)
-    const fenceMatch = /```(?:json)?\s*\n([\s\S]*?)\n\s*```/.exec(text);
-    if (fenceMatch) {
-      text = fenceMatch[1].trim();
-    }
+    const text = stripJsonCodeFences((response.content[0] as { type: 'text'; text: string }).text);
     return JSON.parse(text) as string[];
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -366,10 +374,7 @@ export async function critiqueBrief(
       response.usage.output_tokens,
     );
 
-    let text = (response.content[0] as { type: 'text'; text: string }).text.trim();
-    const fenceMatch = /```(?:json)?\s*\n([\s\S]*?)\n\s*```/.exec(text);
-    if (fenceMatch) text = fenceMatch[1].trim();
-
+    const text = stripJsonCodeFences((response.content[0] as { type: 'text'; text: string }).text);
     const issues = JSON.parse(text) as string[];
 
     if (issues.length) {
@@ -489,9 +494,7 @@ async function detectResolvableTasks(
       response.usage.output_tokens,
     );
 
-    let text = (response.content[0] as { type: 'text'; text: string }).text.trim();
-    const fenceMatch = /```(?:json)?\s*\n([\s\S]*?)\n\s*```/.exec(text);
-    if (fenceMatch) text = fenceMatch[1].trim();
+    const text = stripJsonCodeFences((response.content[0] as { type: 'text'; text: string }).text);
     return JSON.parse(text) as AutoCloseRecommendation[];
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -799,16 +802,7 @@ export async function generateBrief(
 
     logUsage(outputDir, model, 'brief', response.usage.input_tokens, response.usage.output_tokens);
 
-    let { text } = response.content[0] as { type: 'text'; text: string };
-
-    // Strip code fences if present
-    if (text.startsWith('```')) {
-      const lines = text.split('\n');
-      if (lines[0].startsWith('```')) lines.shift();
-      if (lines.at(-1)?.trim() === '```') lines.pop();
-      text = lines.join('\n');
-    }
-
+    const text = stripJsonCodeFences((response.content[0] as { type: 'text'; text: string }).text);
     brief = JSON.parse(text) as Brief;
   } catch (e) {
     console.error(`  Brief generation failed: ${e}`);

@@ -84,6 +84,37 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+describe('stripJsonCodeFences', () => {
+  it('returns plain text unchanged', () => {
+    expect(core.stripJsonCodeFences('{"a":1}')).toBe('{"a":1}');
+  });
+
+  it('strips ```json fences', () => {
+    expect(core.stripJsonCodeFences('```json\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+
+  it('strips bare ``` fences', () => {
+    expect(core.stripJsonCodeFences('```\n[1,2,3]\n```')).toBe('[1,2,3]');
+  });
+
+  it('strips fences with surrounding whitespace', () => {
+    expect(core.stripJsonCodeFences('   ```json\n{"a":1}\n```   ')).toBe('{"a":1}');
+  });
+
+  it('strips fences without trailing newline before closing fence', () => {
+    expect(core.stripJsonCodeFences('```json\n{"a":1}```')).toBe('{"a":1}');
+  });
+
+  it('handles multiline JSON inside fences', () => {
+    const multiline = '```json\n{\n  "a": 1,\n  "b": 2\n}\n```';
+    expect(core.stripJsonCodeFences(multiline)).toBe('{\n  "a": 1,\n  "b": 2\n}');
+  });
+
+  it('returns trimmed text when no fences present', () => {
+    expect(core.stripJsonCodeFences('  {"a":1}  ')).toBe('{"a":1}');
+  });
+});
+
 describe('loadConfig', () => {
   it('should load and parse a config file', () => {
     const mockConfig = JSON.stringify({
