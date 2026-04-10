@@ -77,6 +77,28 @@ export interface ConnectorIssue {
   error: string;
 }
 
+/** Default per-connector deadline. Connectors that hang past this are abandoned. */
+const DEFAULT_CONNECTOR_TIMEOUT_MS = 60_000;
+
+/** Wrap a promise so it rejects with a clear timeout error after `ms` milliseconds. */
+function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => {
+      reject(new Error(`${label} exceeded ${ms / 1000}s deadline`));
+    }, ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
+
 export async function fetchAll(
   config: CallsheetConfig,
 ): Promise<{ results: ConnectorResult[]; issues: ConnectorIssue[] }> {
@@ -89,16 +111,40 @@ export async function fetchAll(
     issues.push({ connector: err.connector, error: err.error });
   }
 
-  for (const conn of connectors) {
-    try {
-      console.log(`  Fetching ${conn.name}...`);
-      const result = await conn.fetch();
-      results.push(result);
-      console.log(`  \u2713 ${conn.name}`);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      issues.push({ connector: conn.name, error });
-      console.log(`  \u2717 ${conn.name}: ${error}`);
+  const timeoutMs =
+    (config.connector_timeout_ms) ?? DEFAULT_CONNECTOR_TIMEOUT_MS;
+
+  // Fire all connector fetches in parallel. Each is wrapped in a deadline so a
+  // single hanging connector cannot stall the brief. Promise.allSettled ensures
+  // one connector's failure never short-circuits the others.
+  console.log(`  Fetching ${connectors.length} connector(s) in parallel...`);
+  const settled = await Promise.allSettled(
+    connectors.map((conn) =>
+      withDeadline(conn.fetch(), timeoutMs, conn.name).then(
+        (result) => {
+          console.log(`  \u2713 ${conn.name}`);
+          return result;
+        },
+        (err) => {
+          // Re-throw so allSettled records it as rejected with the right name attached.
+          const e = err instanceof Error ? err : new Error(String(err));
+          (e as Error & { __connector?: string }).__connector = conn.name;
+          throw e;
+        },
+      ),
+    ),
+  );
+
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    const {name} = connectors[i];
+    if (outcome.status === 'fulfilled') {
+      results.push(outcome.value);
+    } else {
+      const error =
+        outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+      issues.push({ connector: name, error });
+      console.log(`  \u2717 ${name}: ${error}`);
     }
   }
 

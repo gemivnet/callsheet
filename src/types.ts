@@ -45,6 +45,8 @@ export interface CallsheetConfig {
   connectors?: Record<string, ConnectorConfig>;
   extras?: BriefExtra[];
   auto_close_tasks?: boolean;
+  /** Per-connector deadline in milliseconds. Defaults to 60_000 (60s). */
+  connector_timeout_ms?: number;
 }
 
 /** A task that Claude recommends closing based on resolution signals. */

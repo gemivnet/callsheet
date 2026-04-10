@@ -13,6 +13,11 @@ output_dir: output
 # Directory for Google OAuth credentials
 credentials_dir: secrets
 
+# Per-connector deadline in milliseconds. Connectors that hang past this are
+# abandoned and surfaced as issues in the brief, so a single slow API can't
+# stall the whole pipeline. Default: 60000 (60s).
+# connector_timeout_ms: 60000
+
 # ---------------------------------------------------------------------------
 # Connectors
 # ---------------------------------------------------------------------------

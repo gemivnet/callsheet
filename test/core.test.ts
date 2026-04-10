@@ -330,6 +330,143 @@ describe('fetchAll', () => {
     expect(issues[0].connector).toBe('broken_init');
     expect(issues[0].error).toContain('Init failed');
   });
+
+  it('should run connectors in parallel, not sequentially', async () => {
+    // Each connector takes 100ms. Sequentially this would take ~300ms;
+    // in parallel it should take ~100ms. We allow generous slack to avoid
+    // flakiness on slow CI but still catch a regression to sequential.
+    const slow = (name: string) => ({
+      name,
+      description: name,
+      fetch: jest.fn<() => Promise<ConnectorResult>>().mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  source: name,
+                  description: name,
+                  data: {},
+                  priorityHint: 'normal',
+                }),
+              100,
+            ),
+          ),
+      ),
+    });
+
+    mockLoadConnectors.mockReturnValue({
+      connectors: [slow('a'), slow('b'), slow('c')],
+      initErrors: [],
+    });
+
+    const start = Date.now();
+    const { results } = await core.fetchAll({ connectors: {} });
+    const elapsed = Date.now() - start;
+
+    expect(results).toHaveLength(3);
+    // Sequential would be >=300ms; parallel should be well under 250ms.
+    expect(elapsed).toBeLessThan(250);
+  });
+
+  it('should preserve connector order in results regardless of completion order', async () => {
+    const fast = {
+      name: 'fast',
+      description: 'fast',
+      fetch: jest.fn<() => Promise<ConnectorResult>>().mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  source: 'fast',
+                  description: 'fast',
+                  data: {},
+                  priorityHint: 'normal',
+                }),
+              10,
+            ),
+          ),
+      ),
+    };
+    const slow = {
+      name: 'slow',
+      description: 'slow',
+      fetch: jest.fn<() => Promise<ConnectorResult>>().mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  source: 'slow',
+                  description: 'slow',
+                  data: {},
+                  priorityHint: 'normal',
+                }),
+              80,
+            ),
+          ),
+      ),
+    };
+
+    mockLoadConnectors.mockReturnValue({ connectors: [slow, fast], initErrors: [] });
+
+    const { results } = await core.fetchAll({ connectors: {} });
+    expect(results.map((r) => r.source)).toEqual(['slow', 'fast']);
+  });
+
+  it('should abandon a connector that exceeds the deadline', async () => {
+    const hanging = {
+      name: 'hanging',
+      description: 'never resolves',
+      fetch: jest
+        .fn<() => Promise<ConnectorResult>>()
+        .mockImplementation(() => new Promise(() => {})),
+    };
+    mockLoadConnectors.mockReturnValue({ connectors: [hanging], initErrors: [] });
+
+    const { results, issues } = await core.fetchAll({
+      connectors: {},
+      connector_timeout_ms: 50,
+    });
+
+    expect(results).toHaveLength(0);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].connector).toBe('hanging');
+    expect(issues[0].error).toMatch(/deadline/);
+  });
+
+  it('should not let one timeout block other connectors', async () => {
+    const hanging = {
+      name: 'hanging',
+      description: 'never resolves',
+      fetch: jest
+        .fn<() => Promise<ConnectorResult>>()
+        .mockImplementation(() => new Promise(() => {})),
+    };
+    const fast = {
+      name: 'fast',
+      description: 'fast',
+      fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
+        source: 'fast',
+        description: 'fast',
+        data: {},
+        priorityHint: 'normal',
+      }),
+    };
+
+    mockLoadConnectors.mockReturnValue({ connectors: [hanging, fast], initErrors: [] });
+
+    const { results, issues } = await core.fetchAll({
+      connectors: {},
+      connector_timeout_ms: 50,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].source).toBe('fast');
+    expect(issues).toHaveLength(1);
+    expect(issues[0].connector).toBe('hanging');
+  });
 });
 
 describe('saveMemory', () => {
