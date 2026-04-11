@@ -719,9 +719,7 @@ export function isWeeklyReviewDay(config: CallsheetConfig, now: Date = new Date(
 }
 
 function loadPrompt(config: CallsheetConfig): string {
-  const weekly = isWeeklyReviewDay(config);
-  const promptFile = weekly ? 'weekly.md' : 'system.md';
-  const promptPath = join(__dirname, 'prompts', promptFile);
+  const promptPath = join(__dirname, 'prompts', 'system.md');
   let prompt: string;
   try {
     prompt = readFileSync(promptPath, 'utf-8');
@@ -878,10 +876,11 @@ export async function generateBrief(
   });
   const weekly = isWeeklyReviewDay(config, today);
 
-  // Load previous brief for diff context (daily mode only — Week in Review is
-  // its own retrospective and doesn't compare against yesterday's brief).
+  // Previous-brief diff context runs every day, weekly review or not — the
+  // weekly blurb is a small supplement to the daily brief, not a replacement,
+  // so yesterday's brief is still relevant for duplication checks.
   const outputDir = config.output_dir ?? 'output';
-  const prevBrief = weekly ? null : loadPreviousBrief(outputDir);
+  const prevBrief = loadPreviousBrief(outputDir);
   const diffContext = prevBrief ? buildDiffContext(prevBrief) : '';
 
   let brief: Brief;
@@ -899,17 +898,20 @@ export async function generateBrief(
               content:
                 `Today is ${dateStr}.\n\n` +
                 (weekly
-                  ? 'This is a **Week in Review** run — generate the weekly retrospective ' +
-                    'covering the trailing 7 days (today and the 6 prior), per the schema in ' +
-                    'the system prompt.\n\n'
+                  ? 'This is a **Week in Review** day. Generate the normal daily brief as usual — ' +
+                    'but ALSO add a compact "Week in Review" section as the VERY FIRST section of ' +
+                    'the brief (before the Executive Brief). This section must use `body` (not `items`) ' +
+                    'and contain a single short paragraph of 2–4 sentences (~60 words max) reflecting ' +
+                    'on the past 7 days: notable wins, patterns, themes, or progress. Pull from memory ' +
+                    'entries and the 7-day calendar lookback. Keep it retrospective in tone and tight — ' +
+                    'it is a supplement, NOT a replacement for the daily brief. Do not repeat week-in-review ' +
+                    'content in other sections.\n\n'
                   : '') +
                 'Here is all available data from the connected sources:\n' +
                 `<data>\n${dataPayload}\n</data>\n` +
                 diffContext +
                 '\n' +
-                (weekly
-                  ? 'Generate the Week in Review JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.'
-                  : 'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.'),
+                'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
             },
           ],
         }),

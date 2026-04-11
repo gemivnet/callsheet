@@ -48,10 +48,13 @@ export interface CallsheetConfig {
   /** Per-connector deadline in milliseconds. Defaults to 60_000 (60s). */
   connector_timeout_ms?: number;
   /**
-   * Day of the week (name like "saturday" or number 0-6 where 0=Sunday) to
-   * generate a Week in Review brief instead of the daily brief. Omit to
-   * disable. The Week in Review covers the trailing 7 days and uses
-   * `src/prompts/weekly.md` instead of `system.md`.
+   * Day of the week (name like "saturday" or number 0-6 where 0=Sunday) on
+   * which the daily brief is prepended with a compact "Week in Review"
+   * section — a short retrospective blurb reflecting on the past 7 days.
+   * On this day the calendar connector's lookback is auto-bumped to 7 days
+   * so the retrospective has past events to reference. The daily brief is
+   * NOT replaced — the Week in Review is a small supplemental section at
+   * the top. Omit to disable.
    */
   weekly_review_day?: string | number;
 }

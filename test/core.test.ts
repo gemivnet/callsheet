@@ -849,10 +849,10 @@ describe('generateBrief', () => {
     );
   });
 
-  it('should load weekly.md and use review framing on weekly_review_day', async () => {
+  it('should inject a Week in Review instruction on weekly_review_day', async () => {
     const briefJson = JSON.stringify({
-      title: 'Week in Review — Apr 5–11, 2026',
-      sections: [],
+      title: 'Saturday, April 11, 2026',
+      sections: [{ heading: 'Week in Review', body: 'Short retrospective blurb.' }],
     });
 
     mockMessagesCreate
@@ -864,7 +864,6 @@ describe('generateBrief', () => {
     mockReadFileSync.mockImplementation((path: unknown) => {
       const p = path as string;
       readPaths.push(p);
-      if (p.includes('weekly.md')) return 'Week in Review prompt';
       if (p.includes('system.md')) return 'Daily prompt';
       return '{}';
     });
@@ -898,14 +897,65 @@ describe('generateBrief', () => {
       global.Date = realDate;
     }
 
-    // Confirm weekly.md was read and system.md was NOT
-    expect(readPaths.some((p) => p.endsWith('weekly.md'))).toBe(true);
-    expect(readPaths.some((p) => p.endsWith('system.md'))).toBe(false);
+    // Week in Review is a supplemental section in the daily brief — system.md
+    // is still the only prompt loaded, weekly.md does not exist anymore.
+    expect(readPaths.some((p) => p.endsWith('system.md'))).toBe(true);
+    expect(readPaths.some((p) => p.endsWith('weekly.md'))).toBe(false);
 
-    // Confirm the user message contains the Week in Review framing
+    // On Saturdays, the user message includes the injected Week in Review
+    // blurb instruction — tight, supplemental, first section.
     const firstCall = mockMessagesCreate.mock.calls[0] as unknown[];
     const opts = firstCall[0] as { messages: { content: string }[] };
-    expect(opts.messages[0].content).toContain('Week in Review');
+    const userMessage = opts.messages[0].content;
+    expect(userMessage).toContain('Week in Review');
+    expect(userMessage).toContain('VERY FIRST section');
+    expect(userMessage).toContain('supplement, NOT a replacement');
+  });
+
+  it('should NOT inject Week in Review instruction on non-review days', async () => {
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse('{"title":"Fri","sections":[]}'))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
+
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = path as string;
+      if (p.includes('system.md')) return 'Daily prompt';
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    // Pin "now" to a Friday (2026-04-10)
+    const realDate = Date;
+    const fri = new realDate(2026, 3, 10, 9, 0, 0);
+    const SpyDate = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(fri);
+          return;
+        }
+        // @ts-expect-error spread into Date ctor
+        super(...args);
+      }
+      static now() {
+        return fri.getTime();
+      }
+    } as DateConstructor;
+    global.Date = SpyDate;
+
+    try {
+      await core.generateBrief(
+        { ...minimalConfig, weekly_review_day: 'saturday' },
+        '{"data":"test"}',
+      );
+    } finally {
+      global.Date = realDate;
+    }
+
+    const firstCall = mockMessagesCreate.mock.calls[0] as unknown[];
+    const opts = firstCall[0] as { messages: { content: string }[] };
+    expect(opts.messages[0].content).not.toContain('Week in Review');
   });
 
   it('should include connector issues in context', async () => {
