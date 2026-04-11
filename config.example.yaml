@@ -77,6 +77,10 @@ connectors:
   aviation_weather:
     enabled: false
     stations: []
+    # Optional — first ICAO station is used as the AFD source by default.
+    # wfo: KLOT                  # Pin a different WFO for the Area Forecast Discussion
+    # pirep_radius_nm: 100       # PIREP search radius around stations[0]
+    # pirep_age_hours: 2         # How recent PIREPs must be
 
   home_assistant:
     enabled: false
