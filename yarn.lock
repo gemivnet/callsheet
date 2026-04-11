@@ -1977,6 +1977,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/suncalc@npm:^1":
+  version: 1.9.2
+  resolution: "@types/suncalc@npm:1.9.2"
+  checksum: 10c0/13fd49e65f3c31ac09d41f79c812a66b74f40574a683d0503d337114685eb84557748f98ff62c5c440470aa209d39f83dd5f783decbf06a1d68f48fdaf2aa758
+  languageName: node
+  linkType: hard
+
 "@types/yargs-parser@npm:*":
   version: 21.0.3
   resolution: "@types/yargs-parser@npm:21.0.3"
@@ -2840,6 +2847,7 @@ __metadata:
     "@types/node-cron": "npm:^3.0.11"
     "@types/react": "npm:^19.1.2"
     "@types/react-dom": "npm:^19.2.3"
+    "@types/suncalc": "npm:^1"
     commander: "npm:^13.1.0"
     dotenv: "npm:^16.5.0"
     esbuild: "npm:^0.27.4"
@@ -2858,6 +2866,7 @@ __metadata:
     prettier: "npm:^3.8.1"
     react: "npm:^19.1.0"
     react-dom: "npm:^19.2.4"
+    suncalc: "npm:^1.9.0"
     ts-jest: "npm:^29.4.6"
     ts-node: "npm:^10.9.2"
     tsx: "npm:^4.19.4"
@@ -7041,6 +7050,13 @@ __metadata:
   version: 2.0.1
   resolution: "strip-json-comments@npm:2.0.1"
   checksum: 10c0/b509231cbdee45064ff4f9fd73609e2bcc4e84a4d508e9dd0f31f70356473fde18abfb5838c17d56fb236f5a06b102ef115438de0600b749e818a35fbbc48c43
+  languageName: node
+  linkType: hard
+
+"suncalc@npm:^1.9.0":
+  version: 1.9.0
+  resolution: "suncalc@npm:1.9.0"
+  checksum: 10c0/3c76c600ec8e60b7a6efab72f48cce3fc9b4ce95f8fa404fcd13d22f618fee2b83d7ad486544aee76bc20129c9f4eae4a76b09640c54167edd1de6099ca6cd3d
   languageName: node
   linkType: hard
 

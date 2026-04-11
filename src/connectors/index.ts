@@ -32,6 +32,7 @@ import {
   create as createGarbageRecycling,
   validate as validateGarbageRecycling,
 } from './garbage-recycling.js';
+import { create as createSunMoon, validate as validateSunMoon } from './sun-moon.js';
 
 export interface ConnectorEntry {
   factory: ConnectorFactory;
@@ -75,6 +76,7 @@ const registry = new Map<string, ConnectorEntry>([
   ['home_assistant', { factory: createHomeAssistant, validate: validateHomeAssistant }],
   ['actual_budget', { factory: createActualBudget, validate: validateActualBudget }],
   ['garbage_recycling', { factory: createGarbageRecycling, validate: validateGarbageRecycling }],
+  ['sun_moon', { factory: createSunMoon, validate: validateSunMoon }],
 ]);
 
 export function getRegistry(): Map<string, ConnectorEntry> {

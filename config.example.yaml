@@ -82,6 +82,13 @@ connectors:
     # pirep_radius_nm: 100       # PIREP search radius around stations[0]
     # pirep_age_hours: 2         # How recent PIREPs must be
 
+  # Sunrise / sunset / civil twilight / moon phase. Pure local computation —
+  # no API calls. Useful for VFR night currency, walks, stargazing.
+  sun_moon:
+    enabled: false
+    lat: 0.0
+    lon: 0.0
+
   home_assistant:
     enabled: false
     url: http://homeassistant.local:8123
