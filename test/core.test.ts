@@ -128,6 +128,142 @@ describe('stripJsonCodeFences', () => {
   });
 });
 
+describe('buildFeedbackContext', () => {
+  function mockCritiqueFiles(entries: Record<string, { date: string; issues: string[] }>) {
+    // Directory exists, feedback.md does not (we're only testing critique side)
+    mockExistsSync.mockImplementation((p: unknown) => {
+      const path = String(p);
+      if (path.endsWith('feedback.md')) return false;
+      return path.includes('feedback') || path.includes('output');
+    });
+    mockReaddirSync.mockReturnValue(Object.keys(entries));
+    mockReadFileSync.mockImplementation((p: unknown) => {
+      const path = String(p);
+      const match = path.match(/critique_(\d{4}-\d{2}-\d{2})\.json$/);
+      if (!match) return '';
+      const key = `critique_${match[1]}.json`;
+      return JSON.stringify(entries[key] ?? { date: match[1], issues: [] });
+    });
+  }
+
+  it('returns empty string when there are no critique files', () => {
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    expect(core.buildFeedbackContext('output')).toBe('');
+  });
+
+  it('flags a category as RECURRING when it appears on 3+ distinct days', () => {
+    mockCritiqueFiles({
+      'critique_2026-04-07.json': {
+        date: '2026-04-07',
+        issues: ['Duplication: item A appears in Exec Brief AND Tasks'],
+      },
+      'critique_2026-04-08.json': {
+        date: '2026-04-08',
+        issues: ['Duplication: item B appears in Exec Brief AND Tasks'],
+      },
+      'critique_2026-04-09.json': {
+        date: '2026-04-09',
+        issues: ['Duplication: item C appears in Exec Brief AND Email Highlights'],
+      },
+    });
+
+    const ctx = core.buildFeedbackContext('output');
+    expect(ctx).toContain('RECURRING quality problems');
+    expect(ctx).toContain('**Duplication** (3 of the last 3 days)');
+    // Remedy text should appear — that's the whole point.
+    expect(ctx).toContain('walk each Executive Brief item');
+  });
+
+  it('does NOT flag a category that only appears once', () => {
+    mockCritiqueFiles({
+      'critique_2026-04-07.json': {
+        date: '2026-04-07',
+        issues: ['Verbosity: Exec Brief too long'],
+      },
+      'critique_2026-04-08.json': {
+        date: '2026-04-08',
+        issues: ['Missing data: calendar event not surfaced'],
+      },
+    });
+
+    const ctx = core.buildFeedbackContext('output');
+    expect(ctx).not.toContain('RECURRING quality problems');
+    // Specific examples section should still appear.
+    expect(ctx).toContain('Recent specific examples');
+  });
+
+  it('deduplicates a single category across multiple issues on the same day', () => {
+    // Three duplication issues on day 1, one on day 2 — should count as 2 days, not 4.
+    mockCritiqueFiles({
+      'critique_2026-04-07.json': {
+        date: '2026-04-07',
+        issues: [
+          'Duplication: A in Exec Brief AND Tasks',
+          'Duplication: B in Exec Brief AND Email',
+          'Duplication: C in Tasks AND Upcoming',
+        ],
+      },
+      'critique_2026-04-08.json': {
+        date: '2026-04-08',
+        issues: ['Duplication: D in Exec Brief AND Tasks'],
+      },
+    });
+
+    const ctx = core.buildFeedbackContext('output');
+    // Only 2 distinct days, below the 3-day threshold → not recurring.
+    expect(ctx).not.toContain('RECURRING quality problems');
+  });
+
+  it('sorts recurring categories by frequency descending', () => {
+    mockCritiqueFiles({
+      'critique_2026-04-07.json': {
+        date: '2026-04-07',
+        issues: ['Duplication: x', 'Verbosity: y'],
+      },
+      'critique_2026-04-08.json': {
+        date: '2026-04-08',
+        issues: ['Duplication: x', 'Verbosity: y'],
+      },
+      'critique_2026-04-09.json': {
+        date: '2026-04-09',
+        issues: ['Duplication: x', 'Verbosity: y'],
+      },
+      'critique_2026-04-10.json': {
+        date: '2026-04-10',
+        issues: ['Duplication: x'],
+      },
+    });
+
+    const ctx = core.buildFeedbackContext('output');
+    const dupIdx = ctx.indexOf('**Duplication**');
+    const verbIdx = ctx.indexOf('**Verbosity**');
+    expect(dupIdx).toBeGreaterThan(-1);
+    expect(verbIdx).toBeGreaterThan(-1);
+    expect(dupIdx).toBeLessThan(verbIdx); // 4 days > 3 days → Duplication first
+  });
+
+  it('ignores issues that do not match a known category prefix', () => {
+    mockCritiqueFiles({
+      'critique_2026-04-07.json': {
+        date: '2026-04-07',
+        issues: ['Random freeform observation without a category prefix'],
+      },
+      'critique_2026-04-08.json': {
+        date: '2026-04-08',
+        issues: ['Another uncategorized gripe'],
+      },
+      'critique_2026-04-09.json': {
+        date: '2026-04-09',
+        issues: ['Yet another'],
+      },
+    });
+
+    const ctx = core.buildFeedbackContext('output');
+    expect(ctx).not.toContain('RECURRING quality problems');
+  });
+});
+
 describe('resolveWeeklyReviewDay', () => {
   it('returns null for undefined', () => {
     expect(core.resolveWeeklyReviewDay(undefined)).toBeNull();
@@ -1173,7 +1309,8 @@ describe('generateBrief', () => {
     const opts = firstCall[0] as { system: string };
     expect(opts.system).toContain('User feedback');
     expect(opts.system).toContain('Be more concise');
-    expect(opts.system).toContain('Quality issues from recent briefs');
+    // Specific critique issues show up in the examples section.
+    expect(opts.system).toContain('Recent specific examples');
     expect(opts.system).toContain('Too verbose in tasks section');
   });
 

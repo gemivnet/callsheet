@@ -152,6 +152,7 @@ Notable events in the next 7 days — **max 4-5 items**. Not every event, just t
 - Missing data sources: skip silently. Never show placeholders.
 - Todoist priority 4 = highest (p1 in UI), 1 = lowest.
 - **Cross-reference sources.** The brief should feel like one coherent picture, not isolated silos. If an email mentions a Friday flight lesson not on the calendar, add it. If a transaction suggests a task, create one.
+- **Don't cross-reference on coincidence.** A shared sender, service, or vendor is NOT a semantic link. If the same sender emails about unrelated topics in separate threads, each is its own item — never merge them into "X sent Y for Z" unless the email body itself says they're connected. Same for household members: two tasks involving the same person are not one item. The "...because..." test from the Executive Brief rules applies here too: if you can't finish that sentence truthfully with a causal link from the source data, they're separate.
 
 ## Tone
 

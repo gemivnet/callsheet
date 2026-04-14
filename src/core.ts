@@ -396,22 +396,85 @@ function loadRecentCritiques(outputDir: string): CritiqueEntry[] {
   });
 }
 
-function buildFeedbackContext(outputDir: string): string {
+/** Issue categories the self-critique prompt uses as prefixes. */
+const CRITIQUE_CATEGORIES = [
+  'Duplication',
+  'Verbosity',
+  'Missing data',
+  'Poor grouping',
+  'Stale items',
+] as const;
+type CritiqueCategory = (typeof CRITIQUE_CATEGORIES)[number];
+
+/** A category recurring on this many critique days (out of 7) is flagged as repeated. */
+const RECURRING_THRESHOLD_DAYS = 3;
+
+/** Specific guidance per category — what the model should actually do differently. */
+const CATEGORY_REMEDIES: Record<CritiqueCategory, string> = {
+  Duplication:
+    'The SAME topic keeps landing in multiple sections. Before you return the brief, walk each Executive Brief item and delete it if the same topic also appears in Tasks, Email Highlights, or Upcoming. Pick ONE home per topic and live with the choice.',
+  Verbosity:
+    'Executive Brief items are too long and technical for a printed brief. Cap each at a single scannable line. Raw METAR, stock math, tracking numbers, and budget percentages belong in the underlying data — not in the bullet.',
+  'Missing data':
+    "Actionable items in the raw data (calendar, email, Todoist) keep getting dropped from the brief. Before finalizing, scan the raw data one more time for events, emails, and tasks that belong in today's brief but aren't in your draft.",
+  'Poor grouping':
+    'Tasks are jumping between unrelated domains. Cluster them by theme (interview prep, travel, medical, home) so the reader can scan one block at a time.',
+  'Stale items':
+    "Items are being pulled forward from memory or previous briefs without appearing in today's live data. If an item isn't backed by today's connector data, drop it.",
+};
+
+function categorizeIssue(issue: string): CritiqueCategory | null {
+  for (const cat of CRITIQUE_CATEGORIES) {
+    if (issue.startsWith(`${cat}:`)) return cat;
+  }
+  return null;
+}
+
+export function buildFeedbackContext(outputDir: string): string {
   let ctx = '';
 
   // User feedback notes
   ctx += loadFeedbackNotes();
 
-  // Recent self-critique history
   const critiques = loadRecentCritiques(outputDir);
-  const recentIssues = critiques
-    .flatMap((c) => c.issues)
-    .filter((issue, i, arr) => arr.indexOf(issue) === i); // deduplicate
+  if (!critiques.length) return ctx;
 
-  if (recentIssues.length) {
-    ctx += '\n\n## Quality issues from recent briefs\n\n';
-    ctx += 'Your previous briefs had these problems. Actively avoid repeating them:\n\n';
-    for (const issue of recentIssues.slice(-10)) {
+  // Count distinct DAYS each category shows up on, not total issue count.
+  // A category that appears on 5 of the last 7 days is a real pattern.
+  const daysByCategory = new Map<CritiqueCategory, Set<string>>();
+  for (const entry of critiques) {
+    for (const issue of entry.issues) {
+      const cat = categorizeIssue(issue);
+      if (!cat) continue;
+      if (!daysByCategory.has(cat)) daysByCategory.set(cat, new Set());
+      daysByCategory.get(cat)!.add(entry.date);
+    }
+  }
+
+  const recurring = [...daysByCategory.entries()]
+    .filter(([, days]) => days.size >= RECURRING_THRESHOLD_DAYS)
+    .sort((a, b) => b[1].size - a[1].size);
+
+  if (recurring.length) {
+    ctx += '\n\n## RECURRING quality problems — you have made these mistakes repeatedly\n\n';
+    ctx +=
+      'Your self-critique has flagged these SAME problems in multiple recent briefs. ' +
+      'This is the most important section of your instructions: if you do nothing else, fix these today.\n\n';
+    for (const [cat, days] of recurring) {
+      ctx += `- **${cat}** (${days.size} of the last ${critiques.length} days) — ${CATEGORY_REMEDIES[cat]}\n`;
+    }
+  }
+
+  // Also list recent specific examples so the model has concrete anchors.
+  const recentSpecifics = critiques
+    .slice(-3)
+    .flatMap((c) => c.issues)
+    .filter((issue, i, arr) => arr.indexOf(issue) === i)
+    .slice(-8);
+
+  if (recentSpecifics.length) {
+    ctx += '\n### Recent specific examples flagged by self-critique\n\n';
+    for (const issue of recentSpecifics) {
       ctx += `- ${issue}\n`;
     }
   }
