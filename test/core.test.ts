@@ -113,6 +113,19 @@ describe('stripJsonCodeFences', () => {
   it('returns trimmed text when no fences present', () => {
     expect(core.stripJsonCodeFences('  {"a":1}  ')).toBe('{"a":1}');
   });
+
+  it('strips fences when the model adds trailing commentary', () => {
+    // Real-world failure mode observed in auto-close: the model emits the
+    // fenced JSON and then a sentence of commentary, which used to break
+    // the anchored regex and trip JSON.parse on the leading backtick.
+    const input = '```json\n[]\n```\n\nNo tasks qualify for auto-close today.';
+    expect(core.stripJsonCodeFences(input)).toBe('[]');
+  });
+
+  it('strips fences when the model adds leading commentary', () => {
+    const input = "Here's the JSON you asked for:\n```json\n[1,2,3]\n```";
+    expect(core.stripJsonCodeFences(input)).toBe('[1,2,3]');
+  });
 });
 
 describe('resolveWeeklyReviewDay', () => {

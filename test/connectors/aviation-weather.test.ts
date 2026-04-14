@@ -21,14 +21,15 @@ function mockFetch(handlers: Record<string, unknown>): void {
     const urlStr = url.toString();
     for (const [key, body] of Object.entries(handlers)) {
       if (urlStr.includes(key)) {
-        if (typeof body === 'string') {
-          return Promise.resolve({ ok: true, text: () => Promise.resolve(body) });
-        }
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        // safeFetchJson now reads text() then JSON.parses it, so JSON
+        // handlers must surface their payload via text() too. String
+        // handlers (METAR raw, AFD text) pass through unchanged.
+        const text = typeof body === 'string' ? body : JSON.stringify(body);
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(text) });
       }
     }
     // Default: empty 200 so the endpoint "succeeds" with nothing.
-    return Promise.resolve({ ok: true, json: () => Promise.resolve([]), text: () => Promise.resolve('') });
+    return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
   }) as typeof fetch);
 }
 
@@ -281,6 +282,52 @@ describe('aviation-weather connector', () => {
       const result = await conn.fetch();
       expect(result.data.metars).toEqual([]);
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('plain string'));
+      logSpy.mockRestore();
+    });
+
+    it('treats a 200 with empty body as silent null (quiet PIREPs/CWAs)', async () => {
+      // AWC returns 200 with empty body when a product has no reports —
+      // that's valid nothing-to-report, not a parse failure. Before the
+      // fix, this path logged "Unexpected end of JSON input" every day.
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/pirep') || urlStr.includes('/cwa')) {
+          // Empty 200 — the exact behavior observed in production.
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('[]') });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+
+      expect(result.source).toBe('aviation_weather');
+      // No noisy "Unexpected end of JSON input" log for the quiet case.
+      const calls = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((m) => m.includes('Unexpected end of JSON'))).toBe(false);
+      expect(calls.some((m) => m.includes('PIREPs failed'))).toBe(false);
+      expect(calls.some((m) => m.includes('CWA failed'))).toBe(false);
+      logSpy.mockRestore();
+    });
+
+    it('logs and returns null when a 200 body is unparseable JSON', async () => {
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/metar')) {
+          // Non-empty, non-JSON — distinct from the quiet-null case above.
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('<html>500 error</html>') });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+
+      expect(result.data.metars).toEqual([]);
+      const calls = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((m) => m.includes('unparseable JSON'))).toBe(true);
       logSpy.mockRestore();
     });
 

@@ -52,13 +52,15 @@ export const runtimeErrors = new RuntimeErrorCollector();
 /**
  * Strip Markdown code fences from a string before JSON.parse.
  *
- * Claude sometimes wraps JSON output in ```json ... ``` even when told not to.
- * Handles both fenced (```json\n{...}\n```) and bare-fenced (```\n{...}\n```)
- * variants. Returns the input unchanged if no fences are present.
+ * Claude sometimes wraps JSON output in ```json ... ``` even when told not to,
+ * and sometimes emits commentary before or after the fenced block. Extracts
+ * the first fenced region anywhere in the text; falls back to the trimmed
+ * input when no fence is present.
  */
 export function stripJsonCodeFences(text: string): string {
   const trimmed = text.trim();
-  const fenceMatch = /^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/.exec(trimmed);
+  // Unanchored so trailing/leading commentary outside the fence is ignored.
+  const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/.exec(trimmed);
   return fenceMatch ? fenceMatch[1].trim() : trimmed;
 }
 

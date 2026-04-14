@@ -178,7 +178,11 @@ function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
 /**
  * Fetch JSON from an aviationweather.gov endpoint with a deadline. Returns
  * null on any error so a single bad endpoint can't crash the whole connector.
- * Errors are logged so they can be diagnosed via the cron output.
+ *
+ * AWC returns 200 with an empty body when a product has no reports for the
+ * requested window (common for PIREPs and CWAs on quiet days). That's a
+ * valid nothing-to-report response, not a failure — treat it as null
+ * silently. Real errors are still logged for diagnosis.
  */
 async function safeFetchJson<T>(url: string, label: string): Promise<T | null> {
   try {
@@ -187,7 +191,15 @@ async function safeFetchJson<T>(url: string, label: string): Promise<T | null> {
       console.log(`  aviation_weather: ${label} returned ${r.status}`);
       return null;
     }
-    return (await r.json()) as T;
+    const body = (await r.text()).trim();
+    if (!body) return null;
+    try {
+      return JSON.parse(body) as T;
+    } catch (parseErr) {
+      const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      console.log(`  aviation_weather: ${label} returned unparseable JSON: ${msg}`);
+      return null;
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`  aviation_weather: ${label} failed: ${msg}`);
