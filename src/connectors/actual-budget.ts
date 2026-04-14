@@ -1,5 +1,8 @@
+import { mkdirSync } from 'node:fs';
 import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
 import { PASS, FAIL, INFO } from '../test-icons.js';
+
+const DATA_DIR = '/tmp/actual-budget-cache';
 
 interface BudgetCategoryGroup {
   id: string;
@@ -41,8 +44,13 @@ export function create(config: ConnectorConfig): Connector {
       console.warn = noop;
       console.info = noop;
 
+      // @actual-app/api scandir()s dataDir during init and ENOENTs if it's
+      // missing. /tmp is volatile on the server (cleared on reboot or by
+      // systemd-tmpfiles), so create it every run.
+      mkdirSync(DATA_DIR, { recursive: true });
+
       await api.init({
-        dataDir: '/tmp/actual-budget-cache',
+        dataDir: DATA_DIR,
         serverURL,
         password,
       });

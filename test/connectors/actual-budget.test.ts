@@ -1,5 +1,11 @@
 import { jest } from '@jest/globals';
 
+// --- Mock node:fs so we can assert the cache dir is created ---
+const mockMkdirSync = jest.fn<(path: string, opts?: unknown) => void>();
+jest.unstable_mockModule('node:fs', () => ({
+  mkdirSync: mockMkdirSync,
+}));
+
 // --- Mock setup for @actual-app/api (must be before any import that triggers it) ---
 const mockInit = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
 const mockDownloadBudget = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
@@ -157,6 +163,17 @@ describe('actual-budget connector', () => {
   describe('create().fetch()', () => {
     beforeEach(() => {
       resetMocks();
+    });
+
+    it('should mkdir -p the cache dir before init (guards against /tmp getting wiped)', async () => {
+      const connector = create(baseConfig);
+      await connector.fetch();
+
+      expect(mockMkdirSync).toHaveBeenCalledWith('/tmp/actual-budget-cache', { recursive: true });
+      // And it must happen before api.init, or init's scandir will ENOENT.
+      const mkdirOrder = mockMkdirSync.mock.invocationCallOrder[0];
+      const initOrder = mockInit.mock.invocationCallOrder[0];
+      expect(mkdirOrder).toBeLessThan(initOrder);
     });
 
     it('should return correct structure with transactions and spending summary', async () => {
