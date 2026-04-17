@@ -1,7 +1,21 @@
 import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
 import { PASS, FAIL, INFO } from '../test-icons.js';
+import { retry, HttpError } from '../retry.js';
 
 const HEADERS = { 'User-Agent': 'callsheet-brief/1.0' };
+
+/** NWS occasionally 5xxs during model ingest cycles; retry a few times. */
+const NWS_RETRIES = 3;
+const NWS_BASE_DELAY_MS = 400;
+
+function nwsOnRetry(label: string): (attempt: number, err: unknown, delayMs: number) => void {
+  return (attempt, err, delayMs) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(
+      `  weather: ${label} attempt ${attempt} failed (${msg}), retrying in ${delayMs}ms...`,
+    );
+  };
+}
 
 interface NwsAlert {
   event: string;
@@ -14,17 +28,23 @@ interface NwsAlert {
 
 async function fetchAlerts(lat: number, lon: number): Promise<NwsAlert[]> {
   try {
-    const resp = await fetch(
-      `https://api.weather.gov/alerts/active?point=${lat},${lon}&status=actual`,
-      { headers: HEADERS, signal: AbortSignal.timeout(10_000) },
+    const data = await retry(
+      async () => {
+        const resp = await fetch(
+          `https://api.weather.gov/alerts/active?point=${lat},${lon}&status=actual`,
+          { headers: HEADERS, signal: AbortSignal.timeout(10_000) },
+        );
+        if (!resp.ok) throw new HttpError(resp.status, `alerts: ${resp.status}`);
+        return (await resp.json()) as {
+          features: { properties: Record<string, unknown> }[];
+        };
+      },
+      {
+        retries: NWS_RETRIES,
+        baseDelayMs: NWS_BASE_DELAY_MS,
+        onRetry: nwsOnRetry('alerts'),
+      },
     );
-    if (!resp.ok) return [];
-
-    const data = (await resp.json()) as {
-      features: {
-        properties: Record<string, unknown>;
-      }[];
-    };
 
     return (data.features ?? []).map((f) => {
       const p = f.properties;
@@ -74,25 +94,35 @@ export function create(config: ConnectorConfig): Connector {
       const location = (config.location as string) ?? `${lat},${lon}`;
 
       // Step 1: Get the forecast grid endpoint for this location
-      const pointResp = await fetch(`https://api.weather.gov/points/${lat},${lon}`, {
-        headers: HEADERS,
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!pointResp.ok) throw new Error(`NWS points API: ${pointResp.status}`);
-      const pointData = (await pointResp.json()) as {
-        properties: { forecast: string; forecastHourly: string };
-      };
+      const pointData = await retry(
+        async () => {
+          const resp = await fetch(`https://api.weather.gov/points/${lat},${lon}`, {
+            headers: HEADERS,
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!resp.ok) throw new HttpError(resp.status, `NWS points API: ${resp.status}`);
+          return (await resp.json()) as {
+            properties: { forecast: string; forecastHourly: string };
+          };
+        },
+        { retries: NWS_RETRIES, baseDelayMs: NWS_BASE_DELAY_MS, onRetry: nwsOnRetry('points') },
+      );
       const forecastUrl = pointData.properties.forecast;
 
       // Step 2: Get the forecast
-      const forecastResp = await fetch(forecastUrl, {
-        headers: HEADERS,
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!forecastResp.ok) throw new Error(`NWS forecast API: ${forecastResp.status}`);
-      const forecastData = (await forecastResp.json()) as {
-        properties: { periods: Record<string, unknown>[] };
-      };
+      const forecastData = await retry(
+        async () => {
+          const resp = await fetch(forecastUrl, {
+            headers: HEADERS,
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!resp.ok) throw new HttpError(resp.status, `NWS forecast API: ${resp.status}`);
+          return (await resp.json()) as {
+            properties: { periods: Record<string, unknown>[] };
+          };
+        },
+        { retries: NWS_RETRIES, baseDelayMs: NWS_BASE_DELAY_MS, onRetry: nwsOnRetry('forecast') },
+      );
       const { periods } = forecastData.properties;
 
       // Take today + tonight + tomorrow (first 3-4 periods)

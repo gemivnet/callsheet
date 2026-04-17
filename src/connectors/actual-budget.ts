@@ -1,8 +1,39 @@
 import { mkdirSync } from 'node:fs';
 import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
 import { PASS, FAIL, INFO } from '../test-icons.js';
+import { retry } from '../retry.js';
 
 const DATA_DIR = '/tmp/actual-budget-cache';
+
+/** Retries for the (otherwise-flaky) sync step against a home-hosted server. */
+const AB_RETRIES = 2;
+const AB_BASE_DELAY_MS = 1000;
+
+function abOnRetry(label: string): (attempt: number, err: unknown, delayMs: number) => void {
+  return (attempt, err, delayMs) => {
+    console.log(
+      `  actual_budget: ${label} attempt ${attempt} failed (${formatError(err)}), retrying in ${delayMs}ms...`,
+    );
+  };
+}
+
+/**
+ * Produce a readable string for errors that don't stringify sanely.
+ * @actual-app/api throws bare objects like `{ reason: 'network-failure' }`
+ * which turn into the infamous "[object Object]" when String()'d. This
+ * helper flattens them into something diagnostic.
+ */
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return '[unserialisable error object]';
+    }
+  }
+  return String(err);
+}
 
 interface BudgetCategoryGroup {
   id: string;
@@ -49,14 +80,26 @@ export function create(config: ConnectorConfig): Connector {
       // systemd-tmpfiles), so create it every run.
       mkdirSync(DATA_DIR, { recursive: true });
 
-      await api.init({
-        dataDir: DATA_DIR,
-        serverURL,
-        password,
-      });
+      await retry(
+        () =>
+          api.init({
+            dataDir: DATA_DIR,
+            serverURL,
+            password,
+          }),
+        { retries: AB_RETRIES, baseDelayMs: AB_BASE_DELAY_MS, onRetry: abOnRetry('init') },
+      );
 
       try {
-        await api.downloadBudget(syncId, budgetPassword ? { password: budgetPassword } : undefined);
+        await retry(
+          () =>
+            api.downloadBudget(syncId, budgetPassword ? { password: budgetPassword } : undefined),
+          {
+            retries: AB_RETRIES,
+            baseDelayMs: AB_BASE_DELAY_MS,
+            onRetry: abOnRetry('downloadBudget'),
+          },
+        );
 
         const accounts = await api.getAccounts();
         const categories = await api.getCategories();

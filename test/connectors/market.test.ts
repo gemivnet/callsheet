@@ -29,7 +29,8 @@ describe('market connector', () => {
                       marketState: 'REGULAR',
                     },
                     indicators: {
-                      quote: [{ close: [180.0, 181.5, 183.0, 184.0, 185.5] }],
+                      // Current 185.5, 1y high 200 — not near ATH.
+                      quote: [{ close: [200, 190, 180.0, 181.5, 183.0, 184.0, 185.5] }],
                     },
                   },
                 ],
@@ -351,6 +352,131 @@ describe('market connector', () => {
       const symbols = result.data.symbols as Record<string, unknown>[];
       const news = symbols[0].news as { age: string }[];
       expect(news[0].age).toBe('5h ago');
+    });
+
+    it('should flag atNear52wHigh when current price is at or near the 1y peak', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          // Current 100.0, peak 100.05 (0.05% below high) → within 0.5% threshold
+          const closes = Array.from({ length: 200 }, (_, i) => 80 + i * 0.1);
+          closes[closes.length - 1] = 100;
+          closes.push(100.05); // peak near the end
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        regularMarketPrice: 100,
+                        previousClose: 99,
+                        shortName: 'ATH Co',
+                        currency: 'USD',
+                        marketState: 'REGULAR',
+                      },
+                      indicators: { quote: [{ close: closes }] },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ news: [] }) });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['ATHCO'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      expect(symbols[0].high52w).toBeCloseTo(100.05, 2);
+      expect(symbols[0].atNear52wHigh).toBe(true);
+      // priorityHint bumps to 'normal' when any symbol is at ATH
+      expect(result.priorityHint).toBe('normal');
+      // Description should remind the model to surface ATH
+      expect(result.description).toContain('52-week high');
+    });
+
+    it('should flag atNear52wLow when current price is at or near the 1y trough', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          const closes = Array.from({ length: 200 }, (_, i) => 100 - i * 0.1);
+          closes[closes.length - 1] = 80;
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        regularMarketPrice: 80,
+                        previousClose: 81,
+                        shortName: 'ATL Co',
+                        currency: 'USD',
+                        marketState: 'REGULAR',
+                      },
+                      indicators: { quote: [{ close: closes }] },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ news: [] }) });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['ATLCO'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      expect(symbols[0].atNear52wLow).toBe(true);
+    });
+
+    it('should NOT flag ATH when current is comfortably below the 1y high', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/v8/finance/chart')) {
+          // Peak 110, current 100 → 9% off high
+          const closes = [...Array.from({ length: 200 }, (_, i) => 80 + i * 0.15), 110, 100];
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chart: {
+                  result: [
+                    {
+                      meta: {
+                        regularMarketPrice: 100,
+                        previousClose: 99,
+                        shortName: 'Mid Co',
+                        currency: 'USD',
+                        marketState: 'REGULAR',
+                      },
+                      indicators: { quote: [{ close: closes }] },
+                    },
+                  ],
+                },
+              }),
+          });
+        }
+        if (urlStr.includes('/v1/finance/search')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ news: [] }) });
+        }
+        return Promise.resolve({ ok: false });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, symbols: ['MID'] });
+      const result = await conn.fetch();
+      const symbols = result.data.symbols as Record<string, unknown>[];
+      expect(symbols[0].atNear52wHigh).toBe(false);
+      expect(symbols[0].atNear52wLow).toBe(false);
     });
 
   describe('validate', () => {

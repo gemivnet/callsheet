@@ -1,7 +1,21 @@
 import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
 import { PASS, FAIL } from '../test-icons.js';
+import { retry, HttpError } from '../retry.js';
 
 const API = 'https://api.todoist.com/api/v1';
+
+/** Retry budget for Todoist calls — their API has periodic 503 blips. */
+const TODOIST_RETRIES = 3;
+const TODOIST_BASE_DELAY_MS = 500;
+
+function todoistOnRetry(label: string): (attempt: number, err: unknown, delayMs: number) => void {
+  return (attempt, err, delayMs) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(
+      `  todoist: ${label} attempt ${attempt} failed (${msg}), retrying in ${delayMs}ms...`,
+    );
+  };
+}
 
 interface TodoistTask {
   id: string;
@@ -46,12 +60,20 @@ async function fetchAccount(token: string, label: string): Promise<Record<string
       if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
       if (cursor) url.searchParams.set('cursor', cursor);
 
-      const resp = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!resp.ok) throw new Error(`Todoist ${endpoint}: ${resp.status}`);
-      const data = (await resp.json()) as PaginatedResponse<T>;
+      const data = await retry(
+        async () => {
+          const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+          if (!resp.ok) {
+            throw new HttpError(resp.status, `Todoist ${endpoint}: ${resp.status}`, url.toString());
+          }
+          return (await resp.json()) as PaginatedResponse<T>;
+        },
+        {
+          retries: TODOIST_RETRIES,
+          baseDelayMs: TODOIST_BASE_DELAY_MS,
+          onRetry: todoistOnRetry(endpoint),
+        },
+      );
       all.push(...data.results);
       cursor = data.next_cursor;
     } while (cursor);
@@ -77,14 +99,21 @@ async function fetchAccount(token: string, label: string): Promise<Record<string
     url.searchParams.set('since', since.toISOString());
     url.searchParams.set('until', until.toISOString());
     url.searchParams.set('limit', '50');
-    const resp = await fetch(url, {
-      headers,
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (resp.ok) {
-      const data = (await resp.json()) as CompletedResponse;
-      recentlyCompleted = data.items ?? [];
-    }
+    const data = await retry(
+      async () => {
+        const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+        if (!resp.ok) {
+          throw new HttpError(resp.status, `Todoist completed: ${resp.status}`, url.toString());
+        }
+        return (await resp.json()) as CompletedResponse;
+      },
+      {
+        retries: TODOIST_RETRIES,
+        baseDelayMs: TODOIST_BASE_DELAY_MS,
+        onRetry: todoistOnRetry('completed'),
+      },
+    );
+    recentlyCompleted = data.items ?? [];
   } catch {
     // Non-critical — skip if it fails
   }

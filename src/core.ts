@@ -50,6 +50,24 @@ class RuntimeErrorCollector {
 export const runtimeErrors = new RuntimeErrorCollector();
 
 /**
+ * Best-effort string conversion for thrown values that aren't Errors.
+ * Some libraries (looking at you, @actual-app/api) throw bare objects that
+ * lose all information when coerced via String(). JSON-serialise first so
+ * the connector issue line in the brief shows something debuggable.
+ */
+export function formatUnknownError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return '[unserialisable error object]';
+    }
+  }
+  return String(err);
+}
+
+/**
  * Strip Markdown code fences from a string before JSON.parse.
  *
  * Claude sometimes wraps JSON output in ```json ... ``` even when told not to,
@@ -164,7 +182,9 @@ export async function fetchAll(
         },
         (err) => {
           // Re-throw so allSettled records it as rejected with the right name attached.
-          const e = err instanceof Error ? err : new Error(String(err));
+          // Bare objects (@actual-app/api throws `{reason: 'x'}`) would stringify
+          // to "[object Object]" — JSON-serialise them so the brief shows why.
+          const e = err instanceof Error ? err : new Error(formatUnknownError(err));
           (e as Error & { __connector?: string }).__connector = conn.name;
           throw e;
         },
@@ -179,7 +199,9 @@ export async function fetchAll(
       results.push(outcome.value);
     } else {
       const error =
-        outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+        outcome.reason instanceof Error
+          ? outcome.reason.message
+          : formatUnknownError(outcome.reason);
       issues.push({ connector: name, error });
       console.log(`  \u2717 ${name}: ${error}`);
     }

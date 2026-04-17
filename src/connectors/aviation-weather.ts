@@ -1,5 +1,6 @@
 import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
 import { PASS, FAIL, INFO, WARN } from '../test-icons.js';
+import { retry, HttpError } from '../retry.js';
 
 const AWC_API = 'https://aviationweather.gov/api/data';
 
@@ -175,9 +176,24 @@ function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
   });
 }
 
+/** How many retry attempts AWC endpoints get — the site 502s during heavy updates. */
+const AWC_RETRIES = 3;
+/** Base backoff for AWC retries. Keep snappy; AWC outages are usually seconds. */
+const AWC_BASE_DELAY_MS = 400;
+
+function awcOnRetry(label: string): (attempt: number, err: unknown, delayMs: number) => void {
+  return (attempt, err, delayMs) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(
+      `  aviation_weather: ${label} attempt ${attempt} failed (${msg}), retrying in ${delayMs}ms...`,
+    );
+  };
+}
+
 /**
- * Fetch JSON from an aviationweather.gov endpoint with a deadline. Returns
- * null on any error so a single bad endpoint can't crash the whole connector.
+ * Fetch JSON from an aviationweather.gov endpoint with a deadline and
+ * retry-with-backoff. Returns null on persistent error so a single bad
+ * endpoint can't crash the whole connector.
  *
  * AWC returns 200 with an empty body when a product has no reports for the
  * requested window (common for PIREPs and CWAs on quiet days). That's a
@@ -186,12 +202,20 @@ function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
  */
 async function safeFetchJson<T>(url: string, label: string): Promise<T | null> {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(ENDPOINT_TIMEOUT_MS) });
-    if (!r.ok) {
-      console.log(`  aviation_weather: ${label} returned ${r.status}`);
-      return null;
-    }
-    const body = (await r.text()).trim();
+    const body = await retry(
+      async () => {
+        const r = await fetch(url, { signal: AbortSignal.timeout(ENDPOINT_TIMEOUT_MS) });
+        if (!r.ok) {
+          throw new HttpError(r.status, `${label} returned ${r.status}`, url);
+        }
+        return (await r.text()).trim();
+      },
+      {
+        retries: AWC_RETRIES,
+        baseDelayMs: AWC_BASE_DELAY_MS,
+        onRetry: awcOnRetry(label),
+      },
+    );
     if (!body) return null;
     try {
       return JSON.parse(body) as T;
@@ -202,22 +226,30 @@ async function safeFetchJson<T>(url: string, label: string): Promise<T | null> {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.log(`  aviation_weather: ${label} failed: ${msg}`);
+    console.log(`  aviation_weather: ${label} failed after retries: ${msg}`);
     return null;
   }
 }
 
 async function safeFetchText(url: string, label: string): Promise<string | null> {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(ENDPOINT_TIMEOUT_MS) });
-    if (!r.ok) {
-      console.log(`  aviation_weather: ${label} returned ${r.status}`);
-      return null;
-    }
-    return await r.text();
+    return await retry(
+      async () => {
+        const r = await fetch(url, { signal: AbortSignal.timeout(ENDPOINT_TIMEOUT_MS) });
+        if (!r.ok) {
+          throw new HttpError(r.status, `${label} returned ${r.status}`, url);
+        }
+        return await r.text();
+      },
+      {
+        retries: AWC_RETRIES,
+        baseDelayMs: AWC_BASE_DELAY_MS,
+        onRetry: awcOnRetry(label),
+      },
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.log(`  aviation_weather: ${label} failed: ${msg}`);
+    console.log(`  aviation_weather: ${label} failed after retries: ${msg}`);
     return null;
   }
 }
