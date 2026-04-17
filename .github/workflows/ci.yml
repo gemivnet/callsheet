@@ -159,6 +159,28 @@ jobs:
             org.opencontainers.image.version=${{ steps.detect.outputs.tag }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
+      # Extract the new version's section from CHANGELOG.md so the GitHub
+      # Release body shows the same human-written summary as the changelog
+      # (the bullets each changeset produced), not just auto-generated notes.
+      - name: Extract changelog section
+        if: steps.detect.outputs.type == 'stable'
+        id: changelog
+        run: |
+          VERSION="${{ steps.detect.outputs.version }}"
+          # Grab everything between "## <version>" and the next "## " heading.
+          awk -v ver="## ${VERSION}" '
+            $0 == ver { capture = 1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::warning::No CHANGELOG.md section found for ${VERSION}; falling back to auto-generated notes only."
+          else
+            echo "Extracted changelog section for ${VERSION}:"
+            cat RELEASE_NOTES.md
+          fi
+
       # Only create a GitHub Release for stable versions
       - name: Create GitHub Release
         if: steps.detect.outputs.type == 'stable'
@@ -166,6 +188,7 @@ jobs:
         with:
           tag_name: v${{ steps.detect.outputs.version }}
           name: v${{ steps.detect.outputs.version }}
+          body_path: RELEASE_NOTES.md
           generate_release_notes: true
 
       - name: Summary
