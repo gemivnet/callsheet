@@ -121,6 +121,18 @@ connectors:
           day: tuesday
           anchor: "2026-04-21"   # any known recycling pickup date
 
+  # Language learning — emits a phrase-of-the-day as the LAST item in the
+  # Executive Brief section. Maintains its own long-horizon phrase history
+  # (default 30 days) so phrases never repeat even as the shared memory
+  # bucket rotates out. Reads today's connector data for context cues so
+  # the phrase can tie into calendar events / weather / travel plans.
+  language:
+    enabled: false
+    target_language: Spanish         # "French", "Japanese", any language name
+    label_prefix: Español            # short label prefix used in the brief
+    level: "A1-A2"                   # CEFR level or informal tag
+    history_days: 30                 # how far back to remember phrases
+
 # ---------------------------------------------------------------------------
 # Household context
 # ---------------------------------------------------------------------------
@@ -140,15 +152,11 @@ context:
 # Extras — fun recurring items added to the end of the Executive Brief
 # ---------------------------------------------------------------------------
 # Each extra gets its own instruction block. Claude adds these as the last
-# item(s) in the Executive Brief section. Great for language learning,
-# daily quotes, trivia, fun facts, etc.
+# item(s) in the Executive Brief section. Great for daily quotes, trivia,
+# fun facts, etc. For language learning, use the dedicated `language`
+# connector above — it tracks phrase history so nothing repeats.
 #
 # extras:
-#   - name: "Spanish Word of the Day"
-#     instruction: >
-#       Include a Spanish word or phrase as the last Executive Brief item.
-#       Target A1-A2 level, practical and conversational. Format:
-#       label: "Español: \"¿Cómo estás?\" — How are you?"
 #   - name: "Fun Fact"
 #     instruction: >
 #       Include a short, interesting fact related to today's date or events.

@@ -13,6 +13,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import yaml from 'js-yaml';
 import type { CallsheetConfig, ConnectorResult, Brief, AutoCloseRecommendation } from './types.js';
 import { loadConnectors } from './connectors/index.js';
+import { recordBriefPhrase } from './connectors/language.js';
 import { renderPdf } from './render.js';
 import { logUsage } from './usage.js';
 
@@ -1017,6 +1018,11 @@ export async function generateBrief(
 
   // Save memory for future briefs
   await saveMemory(client, model, dataPayload, outputDir);
+
+  // Record today's language phrase into its own long-horizon history so
+  // tomorrow's brief can avoid repeating it. Lives separately from the
+  // shared memory bucket because it needs a longer retention window.
+  recordBriefPhrase(brief, config as unknown as Parameters<typeof recordBriefPhrase>[1]);
 
   // Self-critique: review the brief for quality issues (uses Haiku, ~$0.001)
   const issues = await critiqueBrief(client, brief, dataPayload, outputDir);

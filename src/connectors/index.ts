@@ -33,6 +33,7 @@ import {
   validate as validateGarbageRecycling,
 } from './garbage-recycling.js';
 import { create as createSunMoon, validate as validateSunMoon } from './sun-moon.js';
+import { create as createLanguage, validate as validateLanguage } from './language.js';
 
 export interface ConnectorEntry {
   factory: ConnectorFactory;
@@ -77,6 +78,7 @@ const registry = new Map<string, ConnectorEntry>([
   ['actual_budget', { factory: createActualBudget, validate: validateActualBudget }],
   ['garbage_recycling', { factory: createGarbageRecycling, validate: validateGarbageRecycling }],
   ['sun_moon', { factory: createSunMoon, validate: validateSunMoon }],
+  ['language', { factory: createLanguage, validate: validateLanguage }],
 ]);
 
 export function getRegistry(): Map<string, ConnectorEntry> {
@@ -96,6 +98,11 @@ export function loadConnectors(config: Record<string, unknown>): {
   const connectors: Connector[] = [];
   const initErrors: ConnectorInitError[] = [];
 
+  // Connectors that persist state (e.g. language phrase history) need to
+  // know where the output dir is. Rather than plumb the top-level config
+  // through every connector, inject the shared bits here.
+  const outputDir = (config.output_dir as string) ?? 'output';
+
   for (const [name, connConfig] of Object.entries(connectorConfigs)) {
     if (!connConfig.enabled) continue;
 
@@ -107,7 +114,7 @@ export function loadConnectors(config: Record<string, unknown>): {
     }
 
     try {
-      connectors.push(entry.factory(connConfig));
+      connectors.push(entry.factory({ ...connConfig, output_dir: outputDir }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.log(`  WARNING: Failed to initialize connector '${name}': ${msg}`);
