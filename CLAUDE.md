@@ -2,6 +2,87 @@
 
 These instructions apply to all work on this repository.
 
+## 🔒 NO PII IN THE REPO — CRITICAL
+
+This repo is a **personal intelligence brief**. It ingests calendar events, emails, financial transactions, medical appointments, travel plans, location data, and hobbies. That is exactly the kind of data that must never leak into anything checked into git — this file included.
+
+**Never commit any of the following, anywhere — source, configs, examples, comments, JSDoc, test fixtures, commit messages, changesets, PR descriptions, or this CLAUDE.md itself:**
+
+- Real personal names (first, last, nicknames) — not the user's, not family members', not friends', not colleagues'
+- Real email addresses (the user's, household members', contacts')
+- Real addresses, specific city/state, coordinates, home lat/lon
+- Real phone numbers, account numbers, confirmation codes, tracking numbers
+- Real vendor / merchant names tied to the user (their bank, airline, doctor, stores)
+- Real dollar amounts from actual transactions
+- Specific medical terms, procedure names, appointment types, conditions, medication names
+- Specific travel destinations or dates tied to the user
+- The specific language(s) the user is personally learning (their config overrides the repo default; treat the default as a neutral placeholder)
+- Specific hobbies / activities the user does (e.g. don't name a sport, instrument, or recreational activity they happen to do — describe features structurally instead)
+- Employer names, project codenames, client names, school names
+- Any personalized filename (e.g. per-user config variants) — refer only to `config.yaml` and `config.example.yaml` in docs
+
+**The hard rule:** every committed file must be **generic enough to share with a stranger on the internet**. If a stranger could read it and learn one specific non-public thing about the real user, it's PII — rewrite or remove it. **This policy file itself must obey its own rules** — do not cite real PII as "bad examples" here; use hypothetical placeholders only.
+
+### How to write about real incidents without leaking PII
+
+When describing a bug that was discovered in the user's live data, describe the bug **structurally**, never by the concrete data.
+
+Hypothetical illustration (these are fabricated, not from any real session):
+
+- ❌ "Fixed weekday labeling on Monday's <specific-procedure-from-calendar>"
+- ✅ "Fixed off-by-one weekday labeling on calendar events"
+
+- ❌ "<specific-language> word-of-the-day repeated for 3 days"
+- ✅ "Phrase-of-the-day repeated for 3 days"
+
+- ❌ "<specific-hobby> vocab on <specific-activity> days"
+- ✅ "Contextual vocab tied to today's events"
+
+- ❌ "Travel vocab as <named-destination> trip approaches"
+- ✅ "Travel vocab as a trip approaches"
+
+### Sample configs and examples
+
+`config.example.yaml`, JSDoc examples, test fixtures, README snippets:
+
+- Use **generic placeholders**: `"Your City, ST"`, `"Person 1"`, `"Partner"`, `test@example.com`, `shared@example.com`
+- For language examples, pick a neutral common language (Spanish, French) — never mirror the user's actual target language
+- For travel examples, pick a neutral destination — never mirror the user's actual plans
+- For medical examples, don't use specific procedures — say "appointment" or "annual check-up"
+- Never copy values from the user's real `config.yaml` into `config.example.yaml`
+
+### Changesets
+
+Changesets ship to the public `CHANGELOG.md` on every release. Treat every changeset as public documentation:
+
+- Describe what the code change does, not what user data triggered it
+- Use hypothetical or structural examples, never real ones from the user's dataset
+- If you find yourself writing "e.g. labeling X as Y" where X/Y came from their actual brief, rewrite it
+
+### Commit messages
+
+Same rules as changesets — they're on the public git history forever. `git log` on this repo is public once pushed. Never include:
+
+- Specific calendar entry names, email subjects, merchant names, amounts
+- Specific medical / travel / financial / hobby details that prompted the fix
+- The user's real name, email, or any direct identifier
+
+### Memory files
+
+The files under `~/.claude/projects/.../memory/` are **your** context — they can contain real user data, that's their purpose. **None of that leaves the memory directory.** When writing commits, changesets, code, docs, or this CLAUDE.md, pretend the memory context doesn't exist.
+
+### Pre-push self-audit
+
+Before every `git push`, scan the staged/outgoing diff + commit messages against the PII terms you currently hold in memory:
+
+```
+git log origin/main..HEAD --format="%B" -p | grep -iE "<pattern built from current in-memory PII terms>"
+```
+
+If anything matches, stop and rewrite. Do not build the pattern into this file — it is itself committed.
+
+**If you realize PII already landed in a pushed commit**, immediately: (1) create a backup branch, (2) `git reset --hard` to before the bad commit, (3) rebuild the commits with the PII scrubbed, (4) force-push. The user has explicitly authorized rewriting git history for PII cleanup — do it without asking.
+
 ## Commit Style
 
 - **Always use gitmoji prefixes** on commit messages (e.g. `🧪 Add tests`, `🐛 Fix bug`, `📦 Add dependency`)
