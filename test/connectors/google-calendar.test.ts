@@ -31,7 +31,9 @@ jest.unstable_mockModule('googleapis', () => ({
   },
 }));
 
-const { create, validate } = await import('../../src/connectors/google-calendar.js');
+const { create, validate, formatInTz, relativeDayLabel } = await import(
+  '../../src/connectors/google-calendar.js'
+);
 const { PASS, FAIL, INFO } = await import('../../src/test-icons.js');
 
 function setupCredsAndToken() {
@@ -252,6 +254,98 @@ describe('google-calendar connector', () => {
       const result = await conn.fetch();
 
       expect(result.description).toContain('14 days');
+    });
+  });
+
+  describe('formatInTz', () => {
+    it('formats all-day event with inherent weekday (no TZ shift)', () => {
+      // April 20, 2026 is a Monday. It must resolve to Monday regardless of tz.
+      expect(formatInTz('2026-04-20', 'America/Chicago', true)).toEqual({
+        date: '2026-04-20',
+        dayOfWeek: 'Monday',
+        timeLabel: null,
+      });
+      expect(formatInTz('2026-04-20', 'Asia/Tokyo', true)).toEqual({
+        date: '2026-04-20',
+        dayOfWeek: 'Monday',
+        timeLabel: null,
+      });
+    });
+
+    it('formats timed event in the configured timezone', () => {
+      // 2026-04-20 07:30 Chicago = Monday morning
+      const r = formatInTz('2026-04-20T07:30:00-05:00', 'America/Chicago', false);
+      expect(r.date).toBe('2026-04-20');
+      expect(r.dayOfWeek).toBe('Monday');
+      expect(r.timeLabel).toBe('7:30 AM');
+    });
+
+    it('rolls date across midnight when viewer TZ shifts it to next/prev day', () => {
+      // 2026-04-20 23:30 Chicago (UTC-5) = 2026-04-21 04:30 UTC = still April 21 in Tokyo
+      const rTokyo = formatInTz('2026-04-20T23:30:00-05:00', 'Asia/Tokyo', false);
+      expect(rTokyo.date).toBe('2026-04-21');
+      expect(rTokyo.dayOfWeek).toBe('Tuesday');
+    });
+  });
+
+  describe('relativeDayLabel', () => {
+    it('returns "today" when event is today', () => {
+      expect(relativeDayLabel('2026-04-20', '2026-04-20', 'Monday')).toBe('today');
+    });
+    it('returns "tomorrow" for next day', () => {
+      expect(relativeDayLabel('2026-04-20', '2026-04-21', 'Tuesday')).toBe('tomorrow');
+    });
+    it('returns "yesterday" for previous day', () => {
+      expect(relativeDayLabel('2026-04-20', '2026-04-19', 'Sunday')).toBe('yesterday');
+    });
+    it('returns dayOfWeek with day count within the week', () => {
+      // 2026-04-20 (Mon) → 2026-04-24 (Fri) is +4 days
+      expect(relativeDayLabel('2026-04-20', '2026-04-24', 'Friday')).toBe('Friday (in 4 days)');
+    });
+    it('includes date for far-future events', () => {
+      // +8 days
+      expect(relativeDayLabel('2026-04-20', '2026-04-28', 'Tuesday')).toBe(
+        'Tuesday 2026-04-28 (in 8 days)',
+      );
+    });
+    it('labels past events within the week as "last <day>"', () => {
+      expect(relativeDayLabel('2026-04-20', '2026-04-17', 'Friday')).toBe('last Friday (3 days ago)');
+    });
+  });
+
+  describe('pre-computed event fields', () => {
+    it('attaches dayOfWeek, date, timeLabel, and whenLabel to simplified events', async () => {
+      setupCredsAndToken();
+      // Future all-day event that lands in "upcoming" regardless of when test runs.
+      mockEventsList.mockResolvedValue({
+        data: {
+          items: [
+            {
+              id: 'evt-wkday',
+              summary: 'All-day Monday',
+              start: { date: '2099-12-28' }, // Monday, 2099-12-28
+              end: { date: '2099-12-29' },
+            },
+          ],
+        },
+      });
+
+      const conn = create({
+        enabled: true,
+        calendar_ids: ['primary'],
+        timezone: 'America/Chicago',
+      });
+      const result = await conn.fetch();
+
+      const events = (result.data.upcoming as Record<string, unknown>[]).concat(
+        result.data.today as Record<string, unknown>[],
+      );
+      const evt = events.find((e) => e.summary === 'All-day Monday');
+      expect(evt).toBeDefined();
+      expect(evt?.date).toBe('2099-12-28');
+      expect(evt?.dayOfWeek).toBe('Monday');
+      expect(evt?.timeLabel).toBeNull();
+      expect(typeof evt?.whenLabel).toBe('string');
     });
   });
 
