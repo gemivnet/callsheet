@@ -2,6 +2,7 @@ import express from 'express';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import type { Server } from 'node:http';
 import yaml from 'js-yaml';
 import crypto from 'node:crypto';
 import { loadConfig, runPipeline } from './core.js';
@@ -534,9 +535,9 @@ export function createApp(): express.Express {
   return app;
 }
 
-export function startServer(port: number = parseInt(process.env.PORT ?? '3000', 10)): void {
+export function startServer(port: number = parseInt(process.env.PORT ?? '3000', 10)): Server {
   const app = createApp();
-  app.listen(port, () => {
+  return app.listen(port, () => {
     console.log(`[server] Dashboard running at http://localhost:${port}`);
   });
 }

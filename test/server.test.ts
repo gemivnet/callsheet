@@ -997,10 +997,10 @@ describe('startServer', () => {
   it('starts the server on a given port', async () => {
     const { startServer } = await import('../src/server.js');
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    // Use port 0 for random available port
-    startServer(0);
-    // Give it a moment to start
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const startedServer = startServer(0);
+    // Wait until the listener is actually bound, then close it.
+    await new Promise<void>((resolve) => startedServer.on('listening', () => resolve()));
+    await new Promise<void>((resolve) => startedServer.close(() => resolve()));
     consoleSpy.mockRestore();
   });
 });

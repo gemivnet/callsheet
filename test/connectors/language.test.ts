@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -133,6 +134,12 @@ describe('language connector', () => {
       const checks = validate({ enabled: true, output_dir: outputDir });
       expect(checks.some(([, msg]) => msg.includes('1 entries'))).toBe(true);
     });
+
+    it('warns when history file exists but is corrupt', () => {
+      writeFileSync(join(outputDir, 'language_history.json'), 'not json {{{');
+      const checks = validate({ enabled: true, output_dir: outputDir });
+      expect(checks.some(([, msg]) => msg.includes('History file corrupt'))).toBe(true);
+    });
   });
 
   describe('extractPhraseFromBrief', () => {
@@ -229,6 +236,27 @@ describe('language connector', () => {
       recordBriefPhrase(makeBrief('Just a regular item'), {
         output_dir: outputDir,
         connectors: { language: { enabled: true, label_prefix: 'Español' } },
+      });
+      expect(existsSync(join(outputDir, 'language_history.json'))).toBe(false);
+    });
+
+    it('swallows and logs errors so the brief never breaks', () => {
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      // Point output_dir at an unwritable path so saveHistory() throws.
+      recordBriefPhrase(makeBrief('Español: "Hola" — Hi'), {
+        output_dir: '/proc/invalid/path/that/cannot/be/created',
+        connectors: { language: { enabled: true, label_prefix: 'Español' } },
+      });
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to record language phrase'),
+      );
+      logSpy.mockRestore();
+    });
+
+    it('no-ops when language connector config is missing', () => {
+      recordBriefPhrase(makeBrief('Español: "Hola" — Hi'), {
+        output_dir: outputDir,
+        connectors: {},
       });
       expect(existsSync(join(outputDir, 'language_history.json'))).toBe(false);
     });
