@@ -1,5 +1,5 @@
 ---
-'callsheet-brief': patch
+'callsheet': patch
 ---
 
 🐛 Pre-compute weekday/date/time labels for calendar events so the brief writer can't mis-derive them

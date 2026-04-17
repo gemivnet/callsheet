@@ -1,5 +1,5 @@
 ---
-'callsheet-brief': patch
+'callsheet': patch
 ---
 
 🐛 Strengthen system prompt so the brief writer uses pre-computed calendar fields

@@ -1,5 +1,5 @@
 ---
-'callsheet-brief': minor
+'callsheet': minor
 ---
 
 ✨ Add language connector with 30-day phrase history so the brief's word-of-the-day never repeats
