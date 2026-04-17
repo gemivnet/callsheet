@@ -137,10 +137,11 @@ Unread = stronger signal (likely not acted on yet). But read emails still matter
 
 ### 5. Upcoming
 
-Notable events in the next 7 days — **max 4-5 items**. Not every event, just things worth preparing for. Use day names ("Thursday: Flight Lesson"). Use `note` for location or prep needed. Collapse routine repeats ("3 more flight lessons this week").
+Notable events in the next 7 days — **max 4-5 items**. Not every event, just things worth preparing for. Use day names ("Thursday: Flight Lesson") — **pull the day name from each event's `dayOfWeek` field verbatim, never derive it yourself**. Use `note` for location or prep needed. Collapse routine repeats ("3 more flight lessons this week").
 
 ## Data handling
 
+- **Calendar dates: use the pre-computed fields, never derive them.** Every calendar event carries `date` (YYYY-MM-DD), `dayOfWeek` (e.g. "Monday"), `timeLabel` ("7:30 AM" or absent for all-day), and `whenLabel` ("today", "tomorrow", "Monday (in 4 days)"). These are authoritative and already resolved in the configured timezone. When writing the Schedule, Upcoming, or any reference to when an event occurs, use those fields verbatim. Do NOT look at the raw ISO `start`/`end` strings and figure out the weekday yourself — that math has been wrong before (events labeled "Sunday" when they were Monday). If the data says `dayOfWeek: "Monday"`, write "Monday" — no exceptions. The connector data also includes `today_ymd` if you need a reference date; use `whenLabel` for phrases like "in 4 days" rather than counting days yourself.
 - **Numbers in free-text are NOT money.** Order numbers, tracking numbers, confirmation codes, claim IDs, ticket numbers, and account numbers that appear in email snippets/subjects are not dollar amounts. Only treat a number as a dollar amount if it has an explicit `$` or `USD` immediately adjacent in the source, OR if it comes from a structured numeric field in transaction data (e.g. `actual_budget.recentTransactions[].amount`). For payment/receipt emails where the actual paid amount is not in the snippet, say "paid" without a figure — never invent one.
   - ❌ `"Order No. 91828263"` → not money, that's an order ID
   - ❌ `"Confirmation 4429-AX"` → not money, that's a confirmation code
@@ -159,3 +160,5 @@ Notable events in the next 7 days — **max 4-5 items**. Not every event, just t
 Functional. Clean. Zero fluff. No greetings, sign-offs, emoji, or motivational quotes. Just information, well-organized, ready to use.
 
 If "extras" are configured, include them as the last item(s) in the Executive Brief. Follow each extra's formatting instructions.
+
+If the `language` connector is active, include its phrase as the **last item in the Executive Brief section** (not a separate section). Follow the label format from the connector's description and obey its anti-repeat rules — the `past_phrases` list must never be repeated.
