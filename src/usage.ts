@@ -18,7 +18,10 @@ export interface MonthlyUsage {
 /** Model pricing per million tokens (as of 2026) */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'claude-sonnet-4-20250514': { input: 3, output: 15 },
+  'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-opus-4-20250514': { input: 15, output: 75 },
+  'claude-opus-4-6': { input: 15, output: 75 },
+  'claude-opus-4-7': { input: 15, output: 75 },
   'claude-haiku-4-5-20251001': { input: 1, output: 5 },
 };
 

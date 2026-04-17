@@ -127,6 +127,18 @@ describe('logUsage', () => {
     expect(written.entries[0].cost_usd).toBeCloseTo(5.25, 5);
   });
 
+  it('should calculate cost correctly for Opus 4.7 model', () => {
+    freezeTime('2026-03-15T10:00:00.000Z');
+    mockExistsSync.mockReturnValue(false);
+
+    // Opus 4.7: input $15/M, output $75/M (same as Opus 4.0)
+    usage.logUsage('/out', 'claude-opus-4-7', 'brief', 100_000, 50_000);
+
+    const [, content] = mockWriteFileSync.mock.calls[0] as [string, string];
+    const written = JSON.parse(content) as { entries: Array<{ cost_usd: number }> };
+    expect(written.entries[0].cost_usd).toBeCloseTo(5.25, 5);
+  });
+
   it('should calculate cost correctly for Haiku model', () => {
     freezeTime('2026-03-15T10:00:00.000Z');
     mockExistsSync.mockReturnValue(false);
