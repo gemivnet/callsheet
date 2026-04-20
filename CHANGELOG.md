@@ -1,5 +1,15 @@
 # callsheet
 
+## 1.3.0
+
+### Minor Changes
+
+- c6d7dca: Add vacation mode. Configure one or more `vacation` ranges in `config.yaml` (each with `start` / `end` as YYYY-MM-DD, inclusive on both ends, evaluated in your configured timezone) and the cron-driven scheduler will skip generation entirely on any date that falls inside a range. Manual CLI runs are unaffected, so on-demand briefs still work while you're away.
+
+### Patch Changes
+
+- 0eeaa2a: Fix CI test hang on Linux runners. The language connector test that exercised the `recordBriefPhrase` error path pointed `output_dir` at `/proc/invalid/...`; on macOS that errored fast, but on the GitHub Actions Ubuntu runner `mkdirSync({recursive:true})` against a `/proc` sub-path hung the worker indefinitely (the test job timed out at 47 minutes). Switch the failing path to a sub-path of a regular file so `mkdirSync` fails synchronously with `ENOTDIR` on every OS.
+
 ## 1.2.0
 
 ### Minor Changes
