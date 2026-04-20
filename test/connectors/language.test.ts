@@ -242,9 +242,14 @@ describe('language connector', () => {
 
     it('swallows and logs errors so the brief never breaks', () => {
       const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-      // Point output_dir at an unwritable path so saveHistory() throws.
+      // Force saveHistory() to throw by pointing output_dir at a sub-path of
+      // a regular file. mkdirSync({recursive:true}) then fails fast with
+      // ENOTDIR on every OS — unlike `/proc/...` which hung indefinitely on
+      // Linux CI runners.
+      const blocker = join(outputDir, 'blocker.txt');
+      writeFileSync(blocker, 'i am a file');
       recordBriefPhrase(makeBrief('Español: "Hola" — Hi'), {
-        output_dir: '/proc/invalid/path/that/cannot/be/created',
+        output_dir: join(blocker, 'sub'),
         connectors: { language: { enabled: true, label_prefix: 'Español' } },
       });
       expect(logSpy).toHaveBeenCalledWith(
