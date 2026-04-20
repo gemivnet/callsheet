@@ -57,6 +57,19 @@ export interface CallsheetConfig {
    * the top. Omit to disable.
    */
   weekly_review_day?: string | number;
+  /**
+   * Vacation date ranges during which the scheduled brief should not run.
+   * Each range is inclusive on both ends. Dates are YYYY-MM-DD strings
+   * interpreted in the configured timezone (`process.env.TZ` or system
+   * default). Manual CLI runs are unaffected — only the scheduler skips.
+   * Example: `[{ start: "2026-07-01", end: "2026-07-14" }]`.
+   */
+  vacation?: VacationRange[];
+}
+
+export interface VacationRange {
+  start: string;
+  end: string;
 }
 
 /** A task that Claude recommends closing based on resolution signals. */

@@ -1,7 +1,37 @@
 import cron from 'node-cron';
 import { loadConfig, runPipeline } from './core.js';
+import type { CallsheetConfig } from './types.js';
 
 let running = false;
+
+/**
+ * Returns today's date as YYYY-MM-DD in the configured timezone (TZ env var
+ * or system default). Forcing en-CA gives a clean ISO date without UTC drift
+ * when the brief runs late at night or pre-dawn.
+ */
+function todayInTz(): string {
+  const tz = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/**
+ * Returns true if `today` (YYYY-MM-DD) falls within any configured vacation
+ * range. Ranges are inclusive on both ends. Pass `today` for testability;
+ * defaults to today in the configured TZ.
+ */
+export function isOnVacation(config: CallsheetConfig, today: string = todayInTz()): boolean {
+  const ranges = config.vacation;
+  if (!ranges || ranges.length === 0) return false;
+  return ranges.some((r) => {
+    if (!r?.start || !r?.end) return false;
+    return today >= r.start && today <= r.end;
+  });
+}
 
 /**
  * Run a single brief generation cycle.
@@ -19,6 +49,10 @@ export async function runGeneration(configPath: string): Promise<void> {
 
   try {
     const config = loadConfig(configPath);
+    if (isOnVacation(config)) {
+      console.log(`[scheduler] On vacation today (${todayInTz()}), skipping generation.`);
+      return;
+    }
     await runPipeline(config, { preview: true });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[scheduler] Generation complete in ${elapsed}s`);

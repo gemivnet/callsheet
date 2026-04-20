@@ -223,6 +223,64 @@ describe('runGeneration', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it('should skip pipeline when on vacation', async () => {
+    mockLoadConfig.mockReturnValue({
+      vacation: [{ start: '2026-04-22', end: '2026-05-04' }],
+    });
+    mockRunPipeline.mockResolvedValue(undefined);
+
+    // Pin "today" to a vacation date via TZ-stable Date mock
+    const realNow = Date.now;
+    Date.now = () => new Date('2026-04-25T12:00:00Z').getTime();
+    const realDate = global.Date;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    global.Date = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof realDate>) {
+        if (args.length === 0) super('2026-04-25T12:00:00Z');
+        else super(...args);
+      }
+    } as DateConstructor;
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await scheduler.runGeneration('/tmp/config.yaml');
+      expect(mockLoadConfig).toHaveBeenCalledWith('/tmp/config.yaml');
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      const logs = consoleSpy.mock.calls.map((c) => c[0] as string);
+      expect(logs.some((l) => l.includes('On vacation'))).toBe(true);
+    } finally {
+      Date.now = realNow;
+      global.Date = realDate;
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('should run pipeline when vacation list does not cover today', async () => {
+    mockLoadConfig.mockReturnValue({
+      vacation: [{ start: '2026-04-22', end: '2026-05-04' }],
+    });
+    mockRunPipeline.mockResolvedValue(undefined);
+
+    const realDate = global.Date;
+    global.Date = class extends realDate {
+      constructor(...args: ConstructorParameters<typeof realDate>) {
+        if (args.length === 0) super('2026-05-05T12:00:00Z');
+        else super(...args);
+      }
+    } as DateConstructor;
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await scheduler.runGeneration('/tmp/config.yaml');
+      expect(mockRunPipeline).toHaveBeenCalled();
+    } finally {
+      global.Date = realDate;
+      consoleSpy.mockRestore();
+    }
+  });
+
   it('should prevent concurrent runs via mutex', async () => {
     // Create a deferred promise so we can control when runPipeline resolves
     let resolveFirst!: () => void;
@@ -259,5 +317,89 @@ describe('runGeneration', () => {
     expect(scheduler.isGenerating()).toBe(false);
 
     consoleSpy.mockRestore();
+  });
+});
+
+describe('isOnVacation', () => {
+  it('returns false when no vacation config', () => {
+    expect(scheduler.isOnVacation({}, '2026-05-01')).toBe(false);
+  });
+
+  it('returns false on empty array', () => {
+    expect(scheduler.isOnVacation({ vacation: [] }, '2026-05-01')).toBe(false);
+  });
+
+  it('returns true on the start date (inclusive)', () => {
+    expect(
+      scheduler.isOnVacation(
+        { vacation: [{ start: '2026-04-22', end: '2026-05-04' }] },
+        '2026-04-22',
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true on the end date (inclusive)', () => {
+    expect(
+      scheduler.isOnVacation(
+        { vacation: [{ start: '2026-04-22', end: '2026-05-04' }] },
+        '2026-05-04',
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true mid-range', () => {
+    expect(
+      scheduler.isOnVacation(
+        { vacation: [{ start: '2026-04-22', end: '2026-05-04' }] },
+        '2026-04-28',
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false the day before start', () => {
+    expect(
+      scheduler.isOnVacation(
+        { vacation: [{ start: '2026-04-22', end: '2026-05-04' }] },
+        '2026-04-21',
+      ),
+    ).toBe(false);
+  });
+
+  it('returns false the day after end', () => {
+    expect(
+      scheduler.isOnVacation(
+        { vacation: [{ start: '2026-04-22', end: '2026-05-04' }] },
+        '2026-05-05',
+      ),
+    ).toBe(false);
+  });
+
+  it('handles multiple ranges', () => {
+    const config = {
+      vacation: [
+        { start: '2026-04-22', end: '2026-05-04' },
+        { start: '2026-05-08', end: '2026-05-25' },
+      ],
+    };
+    expect(scheduler.isOnVacation(config, '2026-05-06')).toBe(false);
+    expect(scheduler.isOnVacation(config, '2026-05-08')).toBe(true);
+    expect(scheduler.isOnVacation(config, '2026-05-20')).toBe(true);
+    expect(scheduler.isOnVacation(config, '2026-05-26')).toBe(false);
+  });
+
+  it('skips malformed range entries', () => {
+    const config = {
+      vacation: [
+        { start: '', end: '2026-05-04' } as { start: string; end: string },
+        { start: '2026-04-22', end: '2026-05-04' },
+      ],
+    };
+    expect(scheduler.isOnVacation(config, '2026-04-25')).toBe(true);
+    expect(scheduler.isOnVacation(config, '2026-04-15')).toBe(false);
+  });
+
+  it('uses today in TZ when no date passed', () => {
+    // Just verify it doesn't throw and returns a boolean for an empty config
+    expect(typeof scheduler.isOnVacation({})).toBe('boolean');
   });
 });

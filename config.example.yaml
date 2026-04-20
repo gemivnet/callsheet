@@ -27,6 +27,14 @@ credentials_dir: secrets
 # retrospective has past events to reference.
 # weekly_review_day: saturday
 
+# Vacation ranges. The scheduled cron run skips entirely on any date that
+# falls within one of these ranges (inclusive on both ends, YYYY-MM-DD,
+# evaluated in your configured timezone). Manual CLI runs are unaffected,
+# so you can still trigger a brief on demand if you want one.
+# vacation:
+#   - { start: "2026-07-01", end: "2026-07-14" }
+#   - { start: "2026-12-23", end: "2026-12-31" }
+
 # ---------------------------------------------------------------------------
 # Connectors
 # ---------------------------------------------------------------------------
