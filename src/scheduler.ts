@@ -53,7 +53,11 @@ export async function runGeneration(configPath: string): Promise<void> {
       console.log(`[scheduler] On vacation today (${todayInTz()}), skipping generation.`);
       return;
     }
-    await runPipeline(config, { preview: true });
+    // Scheduled briefs print to the configured printer by default, matching a
+    // host cron. Set PRINT_BRIEF=false (e.g. UI-only deployments) to generate
+    // the PDF and dashboard artifacts without sending a print job.
+    const preview = process.env.PRINT_BRIEF === 'false';
+    await runPipeline(config, { preview });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[scheduler] Generation complete in ${elapsed}s`);
   } catch (e) {

@@ -138,18 +138,36 @@ describe('startScheduler', () => {
 });
 
 describe('runGeneration', () => {
-  it('should call loadConfig and runPipeline', async () => {
+  it('should call loadConfig and runPipeline, printing by default', async () => {
     const mockConfig = { model: 'claude-sonnet-4-20250514', output_dir: '/tmp' };
     mockLoadConfig.mockReturnValue(mockConfig);
     mockRunPipeline.mockResolvedValue(undefined);
+    delete process.env.PRINT_BRIEF;
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
     await scheduler.runGeneration('/tmp/config.yaml');
 
     expect(mockLoadConfig).toHaveBeenCalledWith('/tmp/config.yaml');
+    // Default: print (preview false) so the container matches a host cron.
+    expect(mockRunPipeline).toHaveBeenCalledWith(mockConfig, { preview: false });
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should skip printing (preview) when PRINT_BRIEF=false', async () => {
+    const mockConfig = { model: 'test', output_dir: '/tmp' };
+    mockLoadConfig.mockReturnValue(mockConfig);
+    mockRunPipeline.mockResolvedValue(undefined);
+    process.env.PRINT_BRIEF = 'false';
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    await scheduler.runGeneration('/tmp/config.yaml');
+
     expect(mockRunPipeline).toHaveBeenCalledWith(mockConfig, { preview: true });
 
+    delete process.env.PRINT_BRIEF;
     consoleSpy.mockRestore();
   });
 

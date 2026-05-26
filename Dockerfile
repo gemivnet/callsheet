@@ -3,6 +3,10 @@ FROM node:20-alpine AS build
 
 RUN corepack enable
 
+# Native modules (better-sqlite3, pulled in via @actual-app/api) have no musl
+# prebuilds, so they compile from source on alpine — install the toolchain.
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -21,7 +25,14 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
-RUN yarn workspaces focus --production && yarn cache clean
+# better-sqlite3 recompiles for the production install too; install the build
+# toolchain as a virtual package and drop it afterward to keep the image lean.
+# cups-client provides `lp` so scheduled briefs can print to a CUPS server.
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+  && yarn workspaces focus --production \
+  && yarn cache clean \
+  && apk del .build-deps \
+  && apk add --no-cache cups-client
 
 COPY --from=build /app/dist/ ./dist/
 COPY --from=build /app/web/dist/ ./web/dist/

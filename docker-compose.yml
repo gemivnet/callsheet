@@ -8,7 +8,15 @@ services:
       MODE: headless_docker
       CRON_SCHEDULE: "30 6 * * *"
       TZ: America/Chicago
+      # Scheduled briefs print by default (to the printer set in config.yaml).
+      # Set to "false" for a UI-only / no-printer deployment.
+      PRINT_BRIEF: "true"
+      # The container has no local CUPS daemon — point `lp` at a CUPS server
+      # that has the printer configured (e.g. the Docker host). Uncomment and
+      # set to "<host>:631", or use network_mode: host and "localhost:631".
+      # CUPS_SERVER: "host.docker.internal:631"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./output:/app/output
-      - ./secrets:/app/secrets:ro
+      # Writable: Google OAuth token refresh persists back into this dir.
+      - ./secrets:/app/secrets
