@@ -1,5 +1,15 @@
 # callsheet
 
+## 1.4.0
+
+### Minor Changes
+
+- 7754fce: Docker scheduled briefs can now print. The scheduler prints to the configured printer by default (set `PRINT_BRIEF=false` for UI-only deployments), the image bundles `cups-client` so `lp` can reach a CUPS server via `CUPS_SERVER`, and the build installs the toolchain needed to compile native modules (`better-sqlite3`) on alpine.
+
+### Patch Changes
+
+- 56dd858: Upgrade `@actual-app/api` to 26.5.2 so the budget connector stays in sync with newer Actual Budget server migrations (older client versions refuse to sync against an upgraded server).
+
 ## 1.3.0
 
 ### Minor Changes
