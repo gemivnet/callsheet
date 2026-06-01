@@ -16,11 +16,13 @@ updates:
         update-types: [minor, patch]
     # Major updates get individual PRs since they may have breaking changes
     open-pull-requests-limit: 10
-    reviewers:
-      - gemivnet
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
+    groups:
+      # Batch all GitHub Actions bumps into one PR instead of one-per-action
+      actions:
+        patterns: ["*"]

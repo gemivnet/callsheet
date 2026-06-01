@@ -3,6 +3,8 @@ name: CI/CD
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -100,6 +102,8 @@ jobs:
   release:
     name: Build & Publish
     needs: [lint, test]
+    # Only build/publish images and cut releases on pushes to main, never on PRs.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
