@@ -6,7 +6,7 @@
   "packageManager": "yarn@4.13.0",
   "bin": "dist/cli.js",
   "scripts": {
-    "build": "tsc && node web/build.mjs",
+    "build": "tsc && node web/build.mjs && cp -R src/prompts dist/prompts",
     "build:web": "node web/build.mjs",
     "build:web:watch": "node web/build.mjs --watch",
     "dev:web": "tsx src/dev-server.ts",

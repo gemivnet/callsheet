@@ -8,7 +8,7 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import yaml from 'js-yaml';
 import type {
@@ -1288,7 +1288,10 @@ export function saveBrief(brief: Brief, outputDir: string): string {
 }
 
 export function printPdf(pdfPath: string, printer: string): void {
-  execSync(`lp -d "${printer}" "${pdfPath}"`, { stdio: 'inherit' });
+  // execFileSync, not execSync: `printer` comes from config.yaml, which the dashboard can
+  // rewrite unauthenticated, so an interpolated shell string was a command-injection sink.
+  // No shell is spawned here, so quoting is not required and metacharacters are inert.
+  execFileSync('lp', ['-d', printer, pdfPath], { stdio: 'inherit' });
 }
 
 // ---------------------------------------------------------------------------

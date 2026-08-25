@@ -38,6 +38,20 @@ function getConfigPath(): string {
   return process.env.CONFIG_PATH ?? 'config.yaml';
 }
 
+/**
+ * Every :date route interpolates the param straight into a filename, so an unguarded
+ * value escapes the output directory: `../../../secrets/token_calendar` resolves to the
+ * Google OAuth refresh tokens, and the DELETE route removes any .json it can reach. These
+ * routes are all date-keyed, so a strict YYYY-MM-DD check is both sufficient and free.
+ * Returns true when it has already sent a 400.
+ */
+function rejectBadDate(req: express.Request, res: express.Response): boolean {
+  const date = req.params.date;
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  res.status(400).json({ error: 'Invalid date, expected YYYY-MM-DD' });
+  return true;
+}
+
 export function createApp(): express.Express {
   const app = express();
   app.use(express.json());
@@ -148,6 +162,7 @@ export function createApp(): express.Express {
   });
 
   app.get('/api/briefs/:date', (req, res) => {
+    if (rejectBadDate(req, res)) return;
     const outputDir = getOutputDir();
     const briefPath = join(outputDir, `callsheet_${req.params.date}.json`);
 
@@ -165,6 +180,7 @@ export function createApp(): express.Express {
   });
 
   app.get('/api/briefs/:date/pdf', (req, res) => {
+    if (rejectBadDate(req, res)) return;
     const outputDir = getOutputDir();
     const pdfPath = join(outputDir, `callsheet_${req.params.date}.pdf`);
 
@@ -443,6 +459,7 @@ export function createApp(): express.Express {
   });
 
   app.delete('/api/memory/:date', (req, res) => {
+    if (rejectBadDate(req, res)) return;
     const memPath = join(getOutputDir(), 'memory', `memory_${req.params.date}.json`);
 
     if (!existsSync(memPath)) {
