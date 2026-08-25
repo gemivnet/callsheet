@@ -9,7 +9,7 @@ const mockMkdirSync = jest.fn();
 const mockExistsSync = jest.fn<(...args: unknown[]) => boolean>();
 const mockReaddirSync = jest.fn<(...args: unknown[]) => string[]>();
 const mockUnlinkSync = jest.fn();
-const mockExecSync = jest.fn();
+const mockExecFileSync = jest.fn();
 
 const fsMock = {
   readFileSync: mockReadFileSync,
@@ -31,7 +31,7 @@ jest.unstable_mockModule('fs', () => ({
 }));
 
 jest.unstable_mockModule('node:child_process', () => ({
-  execSync: mockExecSync,
+  execFileSync: mockExecFileSync,
 }));
 
 jest.unstable_mockModule('js-yaml', () => ({
@@ -735,17 +735,29 @@ describe('printPdf', () => {
   it('should call lp with correct printer and path', () => {
     core.printPdf('/tmp/test.pdf', 'Brother_HL');
 
-    expect(mockExecSync).toHaveBeenCalledWith('lp -d "Brother_HL" "/tmp/test.pdf"', {
+    expect(mockExecFileSync).toHaveBeenCalledWith('lp', ['-d', 'Brother_HL', '/tmp/test.pdf'], {
       stdio: 'inherit',
     });
   });
 
-  it('should properly quote paths with spaces', () => {
+  it('passes spaces through as argv, with no shell to re-parse them', () => {
     core.printPdf('/tmp/my brief.pdf', 'My Printer');
 
-    expect(mockExecSync).toHaveBeenCalledWith('lp -d "My Printer" "/tmp/my brief.pdf"', {
+    expect(mockExecFileSync).toHaveBeenCalledWith('lp', ['-d', 'My Printer', '/tmp/my brief.pdf'], {
       stdio: 'inherit',
     });
+  });
+
+  it('does not let a printer name from config reach a shell', () => {
+    core.printPdf('/tmp/test.pdf', '"; touch /tmp/pwned; #');
+
+    // The metacharacters arrive as one literal argv entry. execFileSync spawns no
+    // shell, so there is nothing to interpret them.
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'lp',
+      ['-d', '"; touch /tmp/pwned; #', '/tmp/test.pdf'],
+      { stdio: 'inherit' },
+    );
   });
 });
 
@@ -1930,8 +1942,9 @@ describe('runPipeline', () => {
     expect(result.dataPath).toMatch(/connector_data_.*\.json$/);
 
     // Should have called lp for printing
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining('lp -d "Brother_HL"'),
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'lp',
+      expect.arrayContaining(['-d', 'Brother_HL']),
       { stdio: 'inherit' },
     );
 
@@ -1946,7 +1959,7 @@ describe('runPipeline', () => {
 
     expect(result.brief.title).toMatch(DATE_TITLE);
     // Should NOT have called lp
-    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockExecFileSync).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();
   });
@@ -1963,7 +1976,7 @@ describe('runPipeline', () => {
     const result = await core.runPipeline(noPrinterConfig);
 
     expect(result.brief.title).toMatch(DATE_TITLE);
-    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockExecFileSync).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();
   });

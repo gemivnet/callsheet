@@ -46,6 +46,10 @@ jest.unstable_mockModule('node:crypto', () => ({
 jest.unstable_mockModule('../src/core.js', () => ({
   loadConfig: mockLoadConfig,
   runPipeline: mockRunPipeline,
+  // server.ts imports this for the POST /api/setup default. An ESM module mock must
+  // supply every binding the importer names, or the import fails outright with
+  // "does not provide an export named ..." and the whole suite refuses to load.
+  DEFAULT_MODEL: 'claude-sonnet-5',
 }));
 
 jest.unstable_mockModule('../src/connectors/index.js', () => ({

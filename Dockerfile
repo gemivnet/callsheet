@@ -1,5 +1,5 @@
 # ── Build stage ────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 
 RUN corepack enable
 
@@ -18,7 +18,7 @@ COPY web/ ./web/
 RUN yarn build
 
 # ── Production stage ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:24-alpine AS production
 
 RUN corepack enable
 
