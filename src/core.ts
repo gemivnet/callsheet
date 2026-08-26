@@ -424,7 +424,7 @@ function buildMemoryContext(memories: DailyMemory[]): string {
     '- Check trashed/archived emails — if someone trashed a notification, they already handled it.\n';
   ctx += "- Do NOT let memory override clear resolution signals in today's data.\n";
   ctx +=
-    "- The ABSENCE of data about a memorized item IS a resolution signal. If memory says 'KLM LOA rejected' but there are zero KLM emails in today's data, do NOT re-surface it.\n";
+    "- The ABSENCE of data about a memorized item IS a resolution signal. If memory says a request to some vendor was rejected but there are zero emails from that vendor in today's data, do NOT re-surface it.\n";
   ctx +=
     "- If a memory item has been repeated 3+ days with no change, it's stale — drop it entirely.\n\n";
 

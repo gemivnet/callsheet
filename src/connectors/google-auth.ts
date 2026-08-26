@@ -57,8 +57,10 @@ export async function exchangeCodeAndSave(
 ): Promise<void> {
   const { tokens } = await oauth2.getToken(code);
   oauth2.setCredentials(tokens);
-  mkdirSync(join(tokenPath, '..'), { recursive: true });
-  writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
+  // 0700/0600, not the 0755/0644 defaults: this file is a Google refresh token granting
+  // read access to mail and calendar, and it sits in a directory the dashboard can reach.
+  mkdirSync(join(tokenPath, '..'), { recursive: true, mode: 0o700 });
+  writeFileSync(tokenPath, JSON.stringify(tokens, null, 2), { mode: 0o600 });
 }
 
 /** CLI OAuth flow — starts a temporary local server, opens browser, waits for callback. */

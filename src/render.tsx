@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { Brief, BriefSection, BriefItem } from './types.js';
 
 /* ------------------------------------------------------------------ */
-/*  Font registration — Lato supports Hungarian characters (ő, ű, etc) */
+/*  Font registration — Lato covers the extended Latin range the brief needs */
 /* ------------------------------------------------------------------ */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

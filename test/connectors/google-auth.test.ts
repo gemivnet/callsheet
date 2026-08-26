@@ -229,10 +229,13 @@ describe('google-auth', () => {
         access_token: 'tok123',
         refresh_token: 'ref456',
       });
-      expect(mockMkdirSync).toHaveBeenCalledWith('/creds', { recursive: true });
+      // The modes are part of the contract, not incidental: this file is a Google
+      // refresh token for mail and calendar, so it must not land at the 0644 default.
+      expect(mockMkdirSync).toHaveBeenCalledWith('/creds', { recursive: true, mode: 0o700 });
       expect(mockWriteFileSync).toHaveBeenCalledWith(
         '/creds/token.json',
         JSON.stringify({ access_token: 'tok123', refresh_token: 'ref456' }, null, 2),
+        { mode: 0o600 },
       );
     });
   });

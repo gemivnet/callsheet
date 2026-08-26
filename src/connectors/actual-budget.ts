@@ -74,23 +74,27 @@ export function create(config: ConnectorConfig): Connector {
       console.log = noop;
       console.warn = noop;
       console.info = noop;
-
-      // @actual-app/api scandir()s dataDir during init and ENOENTs if it's
-      // missing. /tmp is volatile on the server (cleared on reboot or by
-      // systemd-tmpfiles), so create it every run.
-      mkdirSync(DATA_DIR, { recursive: true });
-
-      await retry(
-        () =>
-          api.init({
-            dataDir: DATA_DIR,
-            serverURL,
-            password,
-          }),
-        { retries: AB_RETRIES, baseDelayMs: AB_BASE_DELAY_MS, onRetry: abOnRetry('init') },
-      );
-
+      // try starts HERE, not after init: the console swap above is process-wide, and
+      // the finally below is the only thing that restores it. With the try opening
+      // after api.init, a throw from mkdirSync or init left console.log/warn/info
+      // permanently noop-ed for the rest of the run. api.shutdown() in the finally
+      // has its own catch, so running it after a failed init is safe.
       try {
+        // @actual-app/api scandir()s dataDir during init and ENOENTs if it's
+        // missing. /tmp is volatile on the server (cleared on reboot or by
+        // systemd-tmpfiles), so create it every run.
+        mkdirSync(DATA_DIR, { recursive: true });
+
+        await retry(
+          () =>
+            api.init({
+              dataDir: DATA_DIR,
+              serverURL,
+              password,
+            }),
+          { retries: AB_RETRIES, baseDelayMs: AB_BASE_DELAY_MS, onRetry: abOnRetry('init') },
+        );
+
         await retry(
           () =>
             api.downloadBudget(syncId, budgetPassword ? { password: budgetPassword } : undefined),
