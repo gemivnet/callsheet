@@ -3,4 +3,7 @@ services:
     environment:
       MODE: headed_docker
     ports:
-      - "3000:3000"
+      # Loopback only. The dashboard has no auth on any route and its :date handlers
+      # read and delete files under the output and secrets directories; on 0.0.0.0 any
+      # host on the LAN could reach it. Front it with the reverse proxy.
+      - "127.0.0.1:3000:3000"
