@@ -9,7 +9,7 @@ let running = false;
  * or system default). Forcing en-CA gives a clean ISO date without UTC drift
  * when the brief runs late at night or pre-dawn.
  */
-function todayInTz(): string {
+export function todayInTz(): string {
   const tz = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,

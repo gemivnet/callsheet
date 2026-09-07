@@ -10,6 +10,7 @@ import {
   runtimeErrors,
 } from './core.js';
 import { getRegistry } from './connectors/index.js';
+import { isOnVacation, todayInTz } from './scheduler.js';
 
 // Prevent stray async errors (e.g. from @actual-app/api background tasks)
 // from crashing the entire process. Collect them so the brief can report them.
@@ -44,7 +45,8 @@ program
   .option('--show-data', 'Dump raw data and exit')
   .option('--list-connectors', 'List available connectors')
   .option('--test [connectors...]', 'Test connectors')
-  .option('--review [date]', 'Review a brief for quality issues (default: today)');
+  .option('--review [date]', 'Review a brief for quality issues (default: today)')
+  .option('--force', 'Generate even on a configured vacation date');
 
 program.parse();
 
@@ -56,6 +58,7 @@ const opts = program.opts<{
   listConnectors?: boolean;
   test?: string[] | true;
   review?: string | true;
+  force?: boolean;
 }>();
 
 async function main() {
@@ -161,6 +164,12 @@ async function main() {
   }
 
   // --- Generate + save + render + print ---
+  // The host cron invokes this CLI directly (`yarn print`), not the in-container
+  // scheduler, so the vacation check has to live here too or it never runs.
+  if (!opts.force && isOnVacation(config)) {
+    console.log(`On vacation (${todayInTz()}), skipping. Use --force to override.`);
+    return;
+  }
   await runPipeline(config, { preview: opts.preview });
 }
 
