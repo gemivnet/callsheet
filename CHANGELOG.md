@@ -1,5 +1,92 @@
 # callsheet
 
+## 1.5.2
+
+### Patch Changes
+
+- ba65a52: Fix the Actual Budget connector after a server upgrade left the client behind.
+
+  The sync server had moved several releases ahead of the `@actual-app/api`
+  package, so the downloaded budget carried database migrations the client did
+  not recognise and every run failed with "Database is out of sync with
+  migrations". The connector has been silently absent from the brief for weeks.
+  Pinning the client to the server's release line restores it.
+
+- b9e3c30: Bind the headed-mode dashboard to loopback instead of all interfaces.
+
+  The dashboard has no authentication on any route, and its `:date` handlers read and
+  delete files under the output and credential directories. On `0.0.0.0` that surface was
+  reachable from any host on the LAN. It is served through a reverse proxy, so this changes
+  nothing for normal use.
+
+- fd3b645: Repair the two Jest suites that could not load, and move off EOL Node.
+
+  `test/core.test.ts` mocked `node:child_process` with only `execSync`, so it broke the
+  moment `printPdf` switched to `execFileSync`. The mock and its assertions now use the
+  argv form, plus a new case asserting that a printer name full of shell metacharacters
+  arrives as one literal argument.
+
+  `test/server.test.ts` mocked `../src/core.js` without `DEFAULT_MODEL`, which
+  `src/server.ts` imports. An ESM module mock has to supply every binding the importer
+  names or the import throws and the suite never runs. This one predates the change above.
+
+  Both suites were silently not running: 21 of 23 passing looked healthy while 194 tests
+  never executed. Now 23/23 and 568/568, with coverage at 96.73/85.36/96.67/97.96 against
+  the 95/84/95/95 gate.
+
+  Also moves the Dockerfile, CI and `engines.node` from Node 20, which is EOL and no
+  longer receives CVE fixes, to Node 24.
+
+- 2ec85ba: Fix the Docker image producing an error brief instead of a real one, and harden two
+  input paths.
+  - `build` now copies `src/prompts` into `dist/`. `tsc` emits only `.js`, so the built
+    image had no system prompt and `loadPrompt` threw outside the try block, rendering a
+    generation-failure brief on every scheduled run. The local dev path reads from `src/`
+    and was unaffected, which is why it went unnoticed.
+  - The `:date` routes validated nothing before interpolating the parameter into a
+    filename. A percent-encoded traversal reached the handler and resolved outside the
+    output directory; these routes are all date-keyed, so they now reject anything that
+    is not `YYYY-MM-DD`. (The unencoded form never reached the handler — the URL layer
+    normalises it first.)
+  - `printPdf` used `execSync` with the printer name interpolated into a shell string.
+    The dashboard can rewrite config unauthenticated, making that a command-injection
+    sink. It now uses `execFileSync`, which spawns no shell.
+
+- 6d3588f: Three fixes, all found by the repo's own rules rather than by a failure.
+
+  Two committed strings broke the PII policy in this file's own CLAUDE.md. One named the
+  specific language the user is learning; the other named a real vendor, twice, and was not
+  a comment at all but prompt text sent to the model on every run. Both are now
+  structural placeholders that teach the model the same thing.
+
+  OAuth token files were written with the default 0644 into a directory created 0755.
+  These hold Google refresh tokens for mail and calendar and sit where the dashboard can
+  reach them; they are now 0600 in a 0700 directory. The existing test pinned the old call
+  shape and failed, which is the test working as intended — its assertion now documents the
+  modes as part of the contract.
+
+  `actual_budget` replaced `console.log`/`warn`/`info` with no-ops process-wide before
+  opening the `try` whose `finally` restores them, so a throw from `mkdirSync` or
+  `api.init` silenced logging for the rest of the run. The `try` now opens before the swap.
+
+- f4f2aa1: Vacation ranges were unenforceable on the deployment that actually ships briefs.
+
+  `isOnVacation` was only consulted by `runGeneration` in the scheduler, which is reached
+  solely through `entrypoint.ts` — the containerised `MODE=headed_docker` path. A host cron
+  calling `yarn print` goes through `cli.ts`, which called `runPipeline` directly and never
+  looked at the config. Setting a `vacation` range on that setup was a silent no-op: the
+  brief printed every morning regardless, with nothing in the log to say why.
+
+  The CLI now performs the same check before generating, so the config field means the same
+  thing on both paths. `--force` generates anyway, which preserves the on-demand escape
+  hatch the old docs promised via a flag rather than via the accident of which entrypoint
+  you happened to use. `todayInTz` is exported so the skip message names the date it judged
+  on — a skipped run should be legible in a cron log, not silent.
+
+  The docs said "Manual runs still work", which was true as a description of the code and
+  misleading as a description of the behaviour anyone would want. Corrected in both
+  `SETUP_GUIDE.md` and `config.example.yaml`.
+
 ## 1.5.1
 
 ### Patch Changes
