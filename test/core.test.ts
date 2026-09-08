@@ -40,7 +40,8 @@ jest.unstable_mockModule('js-yaml', () => ({
   },
 }));
 
-const mockLoadConnectors = jest.fn<(...args: unknown[]) => { connectors: unknown[]; initErrors: unknown[] }>()
+const mockLoadConnectors = jest
+  .fn<(...args: unknown[]) => { connectors: unknown[]; initErrors: unknown[] }>()
   .mockReturnValue({ connectors: [], initErrors: [] });
 
 jest.unstable_mockModule('../src/connectors/index.js', () => ({
@@ -55,7 +56,9 @@ jest.unstable_mockModule('@anthropic-ai/sdk', () => ({
   })),
 }));
 
-const mockRenderPdf = jest.fn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('/tmp/test.pdf');
+const mockRenderPdf = jest
+  .fn<(...args: unknown[]) => Promise<string>>()
+  .mockResolvedValue('/tmp/test.pdf');
 
 jest.unstable_mockModule('../src/render.js', () => ({
   renderPdf: mockRenderPdf,
@@ -763,18 +766,21 @@ describe('printPdf', () => {
 
 describe('fetchAll', () => {
   it('should return results from successful connectors', async () => {
-    mockLoadConnectors.mockReturnValue({ connectors: [
-      {
-        name: 'test',
-        description: 'test connector',
-        fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
-          source: 'test',
-          description: 'test',
-          data: {},
-          priorityHint: 'normal',
-        }),
-      },
-    ], initErrors: [] });
+    mockLoadConnectors.mockReturnValue({
+      connectors: [
+        {
+          name: 'test',
+          description: 'test connector',
+          fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
+            source: 'test',
+            description: 'test',
+            data: {},
+            priorityHint: 'normal',
+          }),
+        },
+      ],
+      initErrors: [],
+    });
 
     const { results, issues } = await core.fetchAll({ connectors: {} });
 
@@ -784,13 +790,18 @@ describe('fetchAll', () => {
   });
 
   it('should capture connector errors as issues', async () => {
-    mockLoadConnectors.mockReturnValue({ connectors: [
-      {
-        name: 'broken',
-        description: 'broken connector',
-        fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue(new Error('connection timeout')),
-      },
-    ], initErrors: [] });
+    mockLoadConnectors.mockReturnValue({
+      connectors: [
+        {
+          name: 'broken',
+          description: 'broken connector',
+          fetch: jest
+            .fn<() => Promise<ConnectorResult>>()
+            .mockRejectedValue(new Error('connection timeout')),
+        },
+      ],
+      initErrors: [],
+    });
 
     const { results, issues } = await core.fetchAll({ connectors: {} });
 
@@ -801,23 +812,26 @@ describe('fetchAll', () => {
   });
 
   it('should handle mixed success and failure', async () => {
-    mockLoadConnectors.mockReturnValue({ connectors: [
-      {
-        name: 'good',
-        description: 'works',
-        fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
-          source: 'good',
-          description: 'ok',
-          data: { value: 1 },
-          priorityHint: 'normal',
-        }),
-      },
-      {
-        name: 'bad',
-        description: 'fails',
-        fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue(new Error('oops')),
-      },
-    ], initErrors: [] });
+    mockLoadConnectors.mockReturnValue({
+      connectors: [
+        {
+          name: 'good',
+          description: 'works',
+          fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
+            source: 'good',
+            description: 'ok',
+            data: { value: 1 },
+            priorityHint: 'normal',
+          }),
+        },
+        {
+          name: 'bad',
+          description: 'fails',
+          fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue(new Error('oops')),
+        },
+      ],
+      initErrors: [],
+    });
 
     const { results, issues } = await core.fetchAll({ connectors: {} });
 
@@ -826,13 +840,16 @@ describe('fetchAll', () => {
   });
 
   it('should handle non-Error thrown values', async () => {
-    mockLoadConnectors.mockReturnValue({ connectors: [
-      {
-        name: 'weird',
-        description: 'throws string',
-        fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue('string error'),
-      },
-    ], initErrors: [] });
+    mockLoadConnectors.mockReturnValue({
+      connectors: [
+        {
+          name: 'weird',
+          description: 'throws string',
+          fetch: jest.fn<() => Promise<ConnectorResult>>().mockRejectedValue('string error'),
+        },
+      ],
+      initErrors: [],
+    });
 
     const { issues } = await core.fetchAll({ connectors: {} });
     expect(issues[0].error).toBe('string error');
@@ -1055,9 +1072,7 @@ describe('saveMemory', () => {
   });
 
   it('should strip code fences from API response', async () => {
-    mockMessagesCreate.mockResolvedValue(
-      mockApiResponse('```json\n["fenced insight"]\n```'),
-    );
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('```json\n["fenced insight"]\n```'));
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
 
@@ -1066,6 +1081,144 @@ describe('saveMemory', () => {
     expect(mockWriteFileSync).toHaveBeenCalled();
     const parsed = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
     expect(parsed.insights).toEqual(['fenced insight']);
+  });
+});
+
+describe('repairBrief', () => {
+  const mockClient = { messages: { create: mockMessagesCreate } } as never;
+  const dirty: Brief = {
+    title: 'Test Brief',
+    sections: [
+      { heading: 'Executive Brief', items: [{ label: 'Replace furnace filter' }] },
+      { heading: 'Tasks', items: [{ label: 'Replace furnace filter' }] },
+    ],
+  };
+  const clean = {
+    title: 'Test Brief',
+    sections: [{ heading: 'Tasks', items: [{ label: 'Replace furnace filter' }] }],
+  };
+
+  it('repairs duplication and reports what it fixed', async () => {
+    mockMessagesCreate.mockResolvedValue(mockApiResponse(JSON.stringify(clean)));
+    const issue = "Duplication: 'Replace furnace filter' appears in Executive Brief and Tasks";
+
+    const res = await core.repairBrief(mockClient, 'model', dirty, [issue], '/tmp/output');
+
+    expect(res.repaired).toEqual([issue]);
+    expect(res.brief.sections).toHaveLength(1);
+  });
+
+  it('ignores categories that are not objectively checkable', async () => {
+    const res = await core.repairBrief(
+      mockClient,
+      'model',
+      dirty,
+      ['Verbosity: too long', 'Poor grouping: mixed domains'],
+      '/tmp/output',
+    );
+
+    // No repairable issue -> no model call at all.
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(res.repaired).toEqual([]);
+    expect(res.brief).toBe(dirty);
+  });
+
+  it('recognises the singular "Stale item" variant as repairable-adjacent categories do', () => {
+    // Guards the prefix normalisation: 22 real issues used the singular form and
+    // were silently dropped from the recurring-pattern counter.
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['critique_2026-01-01.json'] as never);
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ date: '2026-01-01', issues: ['Stale item: an old thing'] }),
+    );
+    const ctx = core.buildFeedbackContext('output');
+    expect(ctx).toContain('Stale item');
+  });
+
+  it('keeps the original brief when the model returns unusable JSON', async () => {
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('not json at all'));
+
+    const res = await core.repairBrief(
+      mockClient,
+      'model',
+      dirty,
+      ['Duplication: x appears twice'],
+      '/tmp/output',
+    );
+
+    expect(res.brief).toBe(dirty);
+    expect(res.repaired).toEqual([]);
+    consoleSpy.mockRestore();
+  });
+
+  it('keeps the original brief when the repair drops every section', async () => {
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    mockMessagesCreate.mockResolvedValue(mockApiResponse('{"title":"x","sections":[]}'));
+
+    const res = await core.repairBrief(
+      mockClient,
+      'model',
+      dirty,
+      ['Duplication: x appears twice'],
+      '/tmp/output',
+    );
+
+    expect(res.brief).toBe(dirty);
+    expect(res.repaired).toEqual([]);
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('notifyFailure', () => {
+  afterEach(() => {
+    delete (globalThis as { fetch?: unknown }).fetch;
+  });
+
+  it('does nothing without a configured webhook', async () => {
+    const spy = jest.fn();
+    (globalThis as { fetch?: unknown }).fetch = spy;
+
+    await core.notifyFailure({}, new Error('boom'));
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('posts a short ASCII line naming a credit failure', async () => {
+    const spy = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    (globalThis as { fetch?: unknown }).fetch = spy;
+    const err = Object.assign(
+      new Error('Your credit balance is too low to access the Anthropic API.'),
+      { status: 400 },
+    );
+
+    await core.notifyFailure({ notify_webhook: 'http://relay.invalid/george' }, err);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((spy.mock.calls[0][1] as { body: string }).body) as {
+      title: string;
+      message: string;
+    };
+    expect(body.title).toBe('Callsheet');
+    expect(body.message).toContain('CRIT');
+    expect(body.message).toContain('credit exhausted');
+    expect(body.message).toContain('400');
+    expect(body.message.length).toBeLessThanOrEqual(155);
+    // GSM-7 safe: anything outside printable ASCII halves the SMS segment size.
+    expect(body.message).toMatch(/^[\x20-\x7E]*$/);
+  });
+
+  it('never lets the alarm break the run it was watching', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    (globalThis as { fetch?: unknown }).fetch = jest
+      .fn()
+      .mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await expect(
+      core.notifyFailure({ notify_webhook: 'http://relay.invalid/george' }, new Error('boom')),
+    ).resolves.toBeUndefined();
+
+    consoleSpy.mockRestore();
   });
 });
 
@@ -1354,9 +1507,7 @@ describe('generateBrief', () => {
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
 
-    await core.generateBrief(minimalConfig, '{}', [
-      { connector: 'weather', error: 'timeout' },
-    ]);
+    await core.generateBrief(minimalConfig, '{}', [{ connector: 'weather', error: 'timeout' }]);
 
     // The system prompt (first arg of first call) should contain the issue
     const firstCall = mockMessagesCreate.mock.calls[0] as unknown[];
@@ -1648,7 +1799,8 @@ describe('generateBrief', () => {
     mockReaddirSync.mockReturnValue([]);
 
     // Mock global fetch for Todoist close API
-    const mockFetch = jest.fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
+    const mockFetch = jest
+      .fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
       .mockResolvedValue({ ok: true, status: 204 });
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -1666,8 +1818,8 @@ describe('generateBrief', () => {
 
       // Verify auto-close log was saved
       expect(mockWriteFileSync).toHaveBeenCalled();
-      const autoCloseWriteCall = mockWriteFileSync.mock.calls.find(
-        (call) => (call[0] as string).includes('auto_close'),
+      const autoCloseWriteCall = mockWriteFileSync.mock.calls.find((call) =>
+        (call[0] as string).includes('auto_close'),
       );
       expect(autoCloseWriteCall).toBeDefined();
     } finally {
@@ -1744,9 +1896,7 @@ describe('generateBrief', () => {
         family: '2 adults, 1 dog',
         location: 'Portland, OR',
       },
-      extras: [
-        { name: 'Daily Quote', instruction: 'Include an inspiring quote.' },
-      ],
+      extras: [{ name: 'Daily Quote', instruction: 'Include an inspiring quote.' }],
     };
 
     const briefJson = JSON.stringify({ title: 'Context Brief', sections: [] });
@@ -2165,10 +2315,7 @@ describe('runPipeline', () => {
 
     // loadPrompt is called before the try/catch, so it throws
     await expect(
-      core.generateBrief(
-        { model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output' },
-        '{}',
-      ),
+      core.generateBrief({ model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output' }, '{}'),
     ).rejects.toThrow('Prompt not found');
   });
 
@@ -2191,7 +2338,12 @@ describe('runPipeline', () => {
         return JSON.stringify({
           date: yesterdayStr,
           closed: [
-            { task_id: '123', task_content: 'Pay bill', person: 'Person1', reason: 'Payment confirmed' },
+            {
+              task_id: '123',
+              task_content: 'Pay bill',
+              person: 'Person1',
+              reason: 'Payment confirmed',
+            },
           ],
         });
       return '{}';
@@ -2278,10 +2430,12 @@ describe('runPipeline', () => {
     mockMessagesCreate.mockReset();
     mockMessagesCreate
       .mockResolvedValueOnce(
-        mockApiResponse(JSON.stringify({
-          title: 'Critique Brief',
-          sections: [{ heading: 'Weather', body: 'Sunny.' }],
-        })),
+        mockApiResponse(
+          JSON.stringify({
+            title: 'Critique Brief',
+            sections: [{ heading: 'Weather', body: 'Sunny.' }],
+          }),
+        ),
       )
       .mockResolvedValueOnce(mockApiResponse('["insight"]')) // memory
       .mockResolvedValueOnce(mockApiResponse('["Too verbose", "Missing data"]')); // critique
@@ -2403,7 +2557,8 @@ describe('runPipeline', () => {
     mockReaddirSync.mockReturnValue([]);
 
     // Mock fetch to throw a network error
-    const mockFetch = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+    const mockFetch = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockRejectedValue(new Error('Network error'));
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -2459,7 +2614,8 @@ describe('runPipeline', () => {
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
 
-    const mockFetch = jest.fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
+    const mockFetch = jest
+      .fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
       .mockResolvedValue({ ok: false, status: 403 });
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockFetch as unknown as typeof fetch;

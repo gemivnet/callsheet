@@ -625,6 +625,7 @@ yarn review 2026-08-22   # a specific date
 | `auto_close_tasks` | `false` | Lets Claude close Todoist tasks that other sources prove are done. Closures are logged and reported in the next brief. |
 | `weekly_review_day` | off | Day name or `0`-`6` for a short week-in-review section at the top of that day's brief. |
 | `vacation` | none | Date ranges where brief generation is skipped, inclusive on both ends. Honoured by both the in-container scheduler and the CLI. Pass `--force` to generate anyway. |
+| `notify_webhook` | none | URL posted to as `{title, message}` when brief generation fails. The message is one short ASCII line so it survives an SMS gateway. Without it, a failed brief is silent apart from the printed error page. |
 | `connector_timeout_ms` | `60000` | Per-connector deadline. A connector that hangs past this is abandoned and noted in the brief. |
 
 ```yaml

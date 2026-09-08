@@ -63,6 +63,13 @@ export interface CallsheetConfig {
   output_dir?: string;
   credentials_dir?: string;
   /**
+   * Optional webhook posted to when brief generation fails outright, as
+   * `{ title, message }`. Kept generic — any endpoint that accepts that shape
+   * works. Without it a failed brief is silent apart from the printed error
+   * page, which is how a 16-day outage went unnoticed in mid-2026.
+   */
+  notify_webhook?: string;
+  /**
    * IANA timezone for the household, e.g. "America/Chicago". Used for the
    * brief's date, output filenames, connector query windows and the
    * scheduler. Falls back to `process.env.TZ`, then the system zone.

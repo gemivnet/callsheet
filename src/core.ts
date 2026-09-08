@@ -535,6 +535,13 @@ const MAX_CRITIQUE_DAYS = 7;
 interface CritiqueEntry {
   date: string;
   issues: string[];
+  /**
+   * Issues the same-run repair pass actually fixed. They stay in `issues` —
+   * the writer still made the mistake, so the category should keep counting
+   * toward the recurring warning — but they are filtered out of the concrete
+   * examples, which would otherwise cite problems the reader never saw.
+   */
+  repaired?: string[];
 }
 
 function loadFeedbackNotes(): string {
@@ -601,11 +608,33 @@ const CATEGORY_REMEDIES: Record<CritiqueCategory, string> = {
     "Items are being pulled forward from memory or previous briefs without appearing in today's live data. If an item isn't backed by today's connector data, drop it.",
 };
 
+/**
+ * Variants the critique model actually emits. It is told to use the six
+ * categories and mostly does, but it free-forms the edges — "Stale item"
+ * singular alone accounted for 22 issues that the exact-prefix match dropped,
+ * so they never counted toward the recurring-pattern threshold.
+ */
+const CATEGORY_SYNONYMS: Record<string, CritiqueCategory> = {
+  'stale item': 'Stale items',
+  'stale data': 'Stale items',
+  'stale reference': 'Stale items',
+  'stale/incorrect': 'Stale items',
+  'stale/unclear': 'Stale items',
+  'missing event': 'Missing data',
+  'missing context': 'Missing data',
+  'date mismatch': 'Factual accuracy',
+  'data mismatch': 'Factual accuracy',
+};
+
 function categorizeIssue(issue: string): CritiqueCategory | null {
+  const colon = issue.indexOf(':');
+  if (colon <= 0 || colon > 40) return null;
+  const prefix = issue.slice(0, colon).trim().toLowerCase();
   for (const cat of CRITIQUE_CATEGORIES) {
-    if (issue.startsWith(`${cat}:`)) return cat;
+    const c = cat.toLowerCase();
+    if (prefix === c || prefix === c.replace(/s$/, '') || prefix === `${c}s`) return cat;
   }
-  return null;
+  return CATEGORY_SYNONYMS[prefix] ?? null;
 }
 
 export function buildFeedbackContext(outputDir: string): string {
@@ -646,7 +675,10 @@ export function buildFeedbackContext(outputDir: string): string {
   // Also list recent specific examples so the model has concrete anchors.
   const recentSpecifics = critiques
     .slice(-3)
-    .flatMap((c) => c.issues)
+    .flatMap((c) => {
+      const fixed = new Set(c.repaired ?? []);
+      return c.issues.filter((i) => !fixed.has(i));
+    })
     .filter((issue, i, arr) => arr.indexOf(issue) === i)
     .slice(-8);
 
@@ -723,6 +755,154 @@ export async function critiqueBrief(
     console.log(`  Warning: Self-critique failed: ${msg}`);
     runtimeErrors.add('self_critique', msg, 'warning');
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Repair pass — apply today's critique to today's brief
+// ---------------------------------------------------------------------------
+
+/**
+ * Categories worth repairing automatically. Both have an objective answer: an
+ * item is either in two sections or it is not, and a stated fact either matches
+ * the payload or it does not. Verbosity and grouping are judgement calls where a
+ * second pass is as likely to damage a good brief as improve it, so they stay
+ * with the writer and the feedback prompt.
+ */
+const REPAIRABLE_CATEGORIES: ReadonlySet<CritiqueCategory> = new Set([
+  'Duplication',
+  'Factual accuracy',
+]);
+
+/**
+ * The critique already runs before the PDF is rendered, so until now the system
+ * diagnosed today's brief, wrote the diagnosis down for tomorrow, and printed the
+ * flawed brief anyway. Six months of output says that does not converge:
+ * Duplication was 45% of all logged issues and its rate never fell, despite the
+ * feedback prompt naming it as recurring on 7 of the last 7 days. Fixing the
+ * artifact in hand is strictly better than warning the next one.
+ */
+export async function repairBrief(
+  client: Anthropic,
+  model: string,
+  brief: Brief,
+  issues: string[],
+  outputDir: string,
+): Promise<{ brief: Brief; repaired: string[] }> {
+  const actionable = issues.filter((i) => {
+    const cat = categorizeIssue(i);
+    return cat !== null && REPAIRABLE_CATEGORIES.has(cat);
+  });
+  if (!actionable.length) return { brief, repaired: [] };
+
+  try {
+    const response = await withRetry(
+      () =>
+        client.messages.create({
+          model,
+          max_tokens: 20_000,
+          // Editing to an explicit list of defects needs far less deliberation
+          // than writing the brief did.
+          output_config: { effort: 'low' },
+          system:
+            'You repair an already-written household brief. You are given the brief as JSON and a list of ' +
+            'problems found in review. Fix ONLY those problems. Change nothing else: same schema, same ' +
+            'sections, same order, and identical wording everywhere the review did not object.\n\n' +
+            'Duplication — the same topic appears in more than one section. Keep it where it is most ' +
+            'actionable and delete the other copy. The Executive Brief earns a topic only when it adds a ' +
+            'cross-source insight the owning section does not carry (a conflict, a consequence, a deadline); ' +
+            'if it merely restates, delete it from the Executive Brief and leave the owning section alone.\n' +
+            'Factual accuracy — the review states the correct value. Apply it exactly as given.\n\n' +
+            'If removing items empties a section, drop that section. Return ONLY the corrected JSON — no ' +
+            'explanation, no code fences.',
+          messages: [
+            {
+              role: 'user',
+              content:
+                `Brief:\n${JSON.stringify(brief, null, 2)}\n\n` +
+                `Problems to fix:\n${actionable.map((i) => `- ${i}`).join('\n')}\n\n` +
+                'Return the corrected brief JSON now.',
+            },
+          ],
+        }),
+      'brief repair',
+    );
+
+    logUsage(outputDir, model, 'repair', response.usage.input_tokens, response.usage.output_tokens);
+
+    const text = stripJsonCodeFences(extractResponseText(response));
+    const parsed = JSON.parse(text) as Brief;
+    // A repair that returns something structurally unusable is worse than no
+    // repair, so fail closed onto the original.
+    if (!parsed || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
+      throw new Error('repair returned no sections');
+    }
+    return { brief: parsed, repaired: actionable };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  Warning: repair pass failed, keeping the original brief: ${msg}`);
+    runtimeErrors.add('brief_repair', msg, 'warning');
+    return { brief, repaired: [] };
+  }
+}
+
+/** Mark which of today's logged issues the repair pass actually fixed. */
+function recordRepairedIssues(outputDir: string, repaired: string[]): void {
+  if (!repaired.length) return;
+  try {
+    const path = join(outputDir, FEEDBACK_DIR, `critique_${todayYmd()}.json`);
+    if (!existsSync(path)) return;
+    const entry = JSON.parse(readFileSync(path, 'utf-8')) as CritiqueEntry;
+    entry.repaired = repaired;
+    writeFileSync(path, JSON.stringify(entry, null, 2));
+  } catch {
+    /* the critique file is a hint for tomorrow, never worth failing a run over */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Failure notification
+// ---------------------------------------------------------------------------
+
+/**
+ * Post a short failure line to a webhook. Optional and generic on purpose — it
+ * is a URL in config, not a vendor.
+ *
+ * Motivation: between 2026-06-25 and 07-10 every brief was a GENERATION FAILED
+ * page because the Anthropic account had no credit. Sixteen mornings, printed,
+ * with nothing telling anyone. A brief that cannot be written is exactly the
+ * case where the machine has to speak up.
+ */
+export async function notifyFailure(config: CallsheetConfig, error: unknown): Promise<void> {
+  const url = config.notify_webhook;
+  if (!url) return;
+
+  const { status } = error as { status?: number };
+  const raw = error instanceof Error ? error.message : String(error);
+  let detail = raw.replace(/\s+/g, ' ').slice(0, 80);
+  if (/credit balance is too low/i.test(raw)) {
+    detail = 'Anthropic credit exhausted';
+  } else if (/api[_ ]?key|authentication|unauthorized/i.test(raw)) {
+    detail = 'Anthropic auth rejected';
+  }
+
+  // Plain ASCII, one short line: SMS gateways drop to a 70-character segment the
+  // moment a message leaves GSM-7, and a truncated alert is a wasted one.
+  const message = `CRIT Callsheet brief failed${status ? ` (${status})` : ''}: ${detail}`
+    .replace(/[^\x20-\x7E]/g, '')
+    .slice(0, 155);
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Callsheet', message }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) console.error(`  Failure webhook returned ${res.status}`);
+  } catch (e) {
+    // Never let the alarm take down the thing it was watching.
+    console.error(`  Failure webhook error: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -1066,7 +1246,9 @@ async function withRetry<T>(
   retries = MAX_RETRIES,
 ): Promise<T> {
   let lastError: unknown;
+  let attemptsMade = 0;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    attemptsMade = attempt + 1;
     try {
       return await fn();
     } catch (e) {
@@ -1081,6 +1263,12 @@ async function withRetry<T>(
       );
       await new Promise((r) => setTimeout(r, delay));
     }
+  }
+  // Annotate with the REAL number of attempts. A non-retryable status (a billing
+  // 400, a bad key) breaks after one; reporting the ceiling made a two-week credit
+  // outage in June 2026 read as API flakiness on every one of those mornings.
+  if (lastError !== null && typeof lastError === 'object') {
+    (lastError as { attemptsMade?: number }).attemptsMade = attemptsMade;
   }
   throw lastError;
 }
@@ -1103,16 +1291,24 @@ function buildErrorBrief(
   });
 
   const errMsg = error instanceof Error ? error.message : String(error);
-  const { status } = error as { status?: number };
+  const { status, attemptsMade } = error as { status?: number; attemptsMade?: number };
+  const attempts = attemptsMade ?? MAX_RETRIES + 1;
+  // 4xx other than 429 is our fault or our account's: bad key, no credit, bad request.
+  // It will be exactly as broken tomorrow, so say so instead of promising a retry.
+  const terminal = status !== undefined && status >= 400 && status < 500 && status !== 429;
 
   const sections: Brief['sections'] = [
     {
       heading: 'Generation Error',
       body:
-        `Brief generation failed after ${MAX_RETRIES + 1} attempts. ` +
+        `Brief generation failed after ${attempts} attempt${attempts === 1 ? '' : 's'}. ` +
         (status ? `API returned status ${status}. ` : '') +
         `Error: ${errMsg}\n\n` +
-        'Data was fetched successfully and cached — the brief will retry on the next run.',
+        (terminal
+          ? 'This is a TERMINAL error — billing, credentials, or a malformed request. ' +
+            'It will not fix itself on the next run, and retries were skipped deliberately. ' +
+            'Someone has to act.'
+          : 'Data was fetched successfully and cached — the brief will retry on the next run.'),
     },
   ];
 
@@ -1228,6 +1424,7 @@ export async function generateBrief(
   } catch (e) {
     console.error(`  Brief generation failed: ${e}`);
     console.log('  Generating error brief with cached data...');
+    await notifyFailure(config, e);
     return buildErrorBrief(e, connectorIssues, drainedErrors);
   }
 
@@ -1237,18 +1434,38 @@ export async function generateBrief(
   // model cost more per day than the brief itself did on some runs.
   await saveMemory(client, CRITIQUE_MODEL, dataPayload, outputDir);
 
-  // Record today's language phrase into its own long-horizon history so
-  // tomorrow's brief can avoid repeating it. Lives separately from the
-  // shared memory bucket because it needs a longer retention window.
-  recordBriefPhrase(brief, config);
-
   // Self-critique: review the brief for quality issues (uses Haiku, ~$0.001)
   const issues = await critiqueBrief(client, brief, dataPayload, outputDir);
   if (issues.length) {
-    console.log(`  Self-critique: ${issues.length} issue(s) logged for future improvement.`);
+    console.log(`  Self-critique: ${issues.length} issue(s).`);
+    // Act on it now rather than only warning tomorrow's writer.
+    const { brief: repairedBrief, repaired } = await repairBrief(
+      client,
+      model,
+      brief,
+      issues,
+      outputDir,
+    );
+    if (repaired.length) {
+      brief = repairedBrief;
+      // The date is derived, not written — a repair must never move it.
+      brief.title = dateStr;
+      recordRepairedIssues(outputDir, repaired);
+      console.log(`  Repair pass: fixed ${repaired.length} of them in today's brief.`);
+    }
+    const carried = issues.length - repaired.length;
+    if (carried > 0) {
+      console.log(`  ${carried} issue(s) logged for future improvement.`);
+    }
   } else {
     console.log('  Self-critique: no issues found.');
   }
+
+  // Record today's language phrase into its own long-horizon history so
+  // tomorrow's brief can avoid repeating it. Lives separately from the
+  // shared memory bucket because it needs a longer retention window.
+  // Runs AFTER any repair so the recorded phrase is the one that was printed.
+  recordBriefPhrase(brief, config);
 
   // Auto-close: optionally close Todoist tasks proven resolved by other data sources
   if (config.auto_close_tasks) {

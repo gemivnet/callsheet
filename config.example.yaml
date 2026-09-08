@@ -33,6 +33,13 @@ credentials_dir: secrets
 # retrospective has past events to reference.
 # weekly_review_day: saturday
 
+# Optional webhook posted to when brief generation fails outright, as
+# {"title": "Callsheet", "message": "CRIT Callsheet brief failed (400): ..."}.
+# Any endpoint accepting that shape works. Without it a failed brief is silent
+# apart from the printed error page — which is how one deployment printed a
+# GENERATION FAILED page every morning for 16 days after its API credit ran out.
+# notify_webhook: "http://127.0.0.1:5015/alerts"
+
 # Vacation ranges. Brief generation is skipped entirely on any date that
 # falls within one of these ranges (inclusive on both ends, YYYY-MM-DD,
 # evaluated in your configured timezone). Honoured by both the in-container
