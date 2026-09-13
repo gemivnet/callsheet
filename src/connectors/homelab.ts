@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 
+import { FAIL, PASS } from '../test-icons.js';
 import type { Check, Connector, ConnectorConfig, ConnectorResult } from '../types.js';
 
 /**
@@ -22,9 +23,25 @@ interface StatusDoc {
 
 const DEFAULT_STALE_HOURS = 26;
 
+/** Config values arrive as `unknown`; narrow rather than String()-ing an object into '[object Object]'. */
+function str(v: unknown, fallback: string): string {
+  return typeof v === 'string' && v !== '' ? v : fallback;
+}
+
+/**
+ * A quiet night should cost the brief nothing, so INFO maps to "low" — Claude mentions it
+ * only if something in the document is noteworthy. A stale document outranks its own
+ * severity, because a job that stopped writing looks exactly like a clean night.
+ */
+function priorityFor(severity: string, stale: boolean): ConnectorResult['priorityHint'] {
+  if (stale || severity === 'CRIT') return 'high';
+  if (severity === 'WARN') return 'normal';
+  return 'low';
+}
+
 export function create(config: ConnectorConfig): Connector {
-  const path = String(config.path ?? '');
-  const label = String(config.label ?? 'infrastructure');
+  const path = str(config.path, '');
+  const label = str(config.label, 'infrastructure');
   const staleHours = Number(config.stale_hours ?? DEFAULT_STALE_HOURS);
 
   return {
@@ -45,13 +62,8 @@ export function create(config: ConnectorConfig): Connector {
       const ageHours = (Date.now() - stamp.getTime()) / 3_600_000;
       const stale = ageHours > staleHours;
 
-      const severity = String(doc.severity ?? 'INFO').toUpperCase();
-
-      // "low" means Claude mentions it only if noteworthy, which is exactly right for a
-      // quiet night: no suppression logic needed on the producing side. A real problem, or
-      // a document that has gone stale, earns a place in the brief.
-      const priorityHint: ConnectorResult['priorityHint'] =
-        stale || severity === 'CRIT' ? 'high' : severity === 'WARN' ? 'normal' : 'low';
+      const severity = str(doc.severity, 'INFO').toUpperCase();
+      const priorityHint = priorityFor(severity, stale);
 
       return {
         source: 'homelab',
@@ -77,7 +89,9 @@ export function validate(config: ConnectorConfig): Check[] {
   const checks: Check[] = [];
   const path = String(config.path ?? '');
   checks.push(
-    path ? ['✅', 'path set', path] : ['❌', 'path missing', 'Add `path` to the homelab config block'],
+    path
+      ? [PASS, `Reading status from ${path}`, '']
+      : [FAIL, 'path not configured', 'Set `path` in the homelab config block'],
   );
   return checks;
 }
