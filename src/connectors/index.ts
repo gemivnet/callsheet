@@ -34,6 +34,7 @@ import {
 } from './garbage-recycling.js';
 import { create as createSunMoon, validate as validateSunMoon } from './sun-moon.js';
 import { create as createLanguage, validate as validateLanguage } from './language.js';
+import { create as createHomelab, validate as validateHomelab } from './homelab.js';
 
 export interface ConnectorEntry {
   factory: ConnectorFactory;
@@ -79,6 +80,7 @@ const registry = new Map<string, ConnectorEntry>([
   ['garbage_recycling', { factory: createGarbageRecycling, validate: validateGarbageRecycling }],
   ['sun_moon', { factory: createSunMoon, validate: validateSunMoon }],
   ['language', { factory: createLanguage, validate: validateLanguage }],
+  ['homelab', { factory: createHomelab, validate: validateHomelab }],
 ]);
 
 export function getRegistry(): Map<string, ConnectorEntry> {
