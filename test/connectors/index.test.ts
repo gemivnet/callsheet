@@ -55,10 +55,10 @@ beforeEach(() => {
 });
 
 describe('getRegistry', () => {
-  it('should return a Map of all 11 registered connectors', () => {
+  it('should return a Map of all 12 registered connectors', () => {
     const registry = getRegistry();
     expect(registry).toBeInstanceOf(Map);
-    expect(registry.size).toBe(11);
+    expect(registry.size).toBe(12);
   });
 
   it('should contain all expected connector names', () => {
@@ -75,6 +75,7 @@ describe('getRegistry', () => {
       'garbage_recycling',
       'sun_moon',
       'language',
+      'homelab',
     ];
     for (const name of expected) {
       expect(registry.has(name)).toBe(true);
