@@ -47,6 +47,19 @@ describe('homelab connector', () => {
       expect(r.description).toContain('which is current');
     });
 
+    it('insists on reporting work that was done, because silence reads as nothing happened', async () => {
+      const path = await doc({ severity: 'WARN', action_taken: true, generated_at: hoursAgo(1) });
+      const { description } = await create({ path }).fetch();
+      expect(description).toMatch(/at least one line/i);
+      expect(description).not.toMatch(/one line is enough/i);
+    });
+
+    it('does not imply work happened when none did', async () => {
+      const path = await doc({ severity: 'INFO', action_taken: false, generated_at: hoursAgo(1) });
+      const { description } = await create({ path }).fetch();
+      expect(description).toMatch(/Nothing was changed overnight/i);
+    });
+
     it('maps INFO to low, so a quiet night is mentioned only if noteworthy', async () => {
       const path = await doc({ generated_at: hoursAgo(1), severity: 'INFO' });
       expect((await create({ enabled: true, path }).fetch()).priorityHint).toBe('low');

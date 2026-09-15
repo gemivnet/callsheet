@@ -17,6 +17,7 @@ import type { Check, Connector, ConnectorConfig, ConnectorResult } from '../type
 
 interface StatusDoc {
   severity?: string;
+  action_taken?: boolean;
   generated_at?: string;
   [key: string]: unknown;
 }
@@ -74,7 +75,9 @@ export function create(config: ConnectorConfig): Connector {
             : `It is ${ageHours.toFixed(1)} hours old, which is current.`,
           `Severity is ${severity}.`,
           'If severity is INFO and nothing in the document needs a decision, omit this entirely — do not pad the brief with "all systems normal".',
-          'If something was fixed overnight, one line is enough — the reader does not need the mechanism.',
+          doc.action_taken
+            ? 'Work was carried out overnight. Say what was done in at least one line — the reader\u2019s standing request is to be told what was handled on their behalf, so silence here reads as nothing having happened. The mechanism does not matter; the outcome does.'
+            : 'Nothing was changed overnight, so do not imply that it was.',
           'If something needs a person to act, lead with what and why, and keep it to the decision rather than the diagnosis.',
           'Never reproduce credentials, tokens, file paths or network addresses from this document into the brief.',
         ].join(' '),
