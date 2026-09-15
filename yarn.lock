@@ -5,22 +5,22 @@ __metadata:
   version: 8
   cacheKey: 10c0
 
-"@actual-app/api@npm:^26.8.1":
-  version: 26.8.1
-  resolution: "@actual-app/api@npm:26.8.1"
+"@actual-app/api@npm:^26.9.0":
+  version: 26.9.0
+  resolution: "@actual-app/api@npm:26.9.0"
   dependencies:
-    "@actual-app/core": "npm:26.8.1"
+    "@actual-app/core": "npm:26.9.0"
     "@actual-app/crdt": "npm:3.1.1"
     better-sqlite3: "npm:^12.11.1"
     compare-versions: "npm:^6.1.1"
     uuid: "npm:^14.0.1"
-  checksum: 10c0/1cc2208702285418b03eb05409d3fd0e206d679e4ead161165dca1dbcd3d6ea57b0b8741a829cd8fc30e0656e2607f3057ead9324bf58f6d986e04112226000e
+  checksum: 10c0/846621bd7c18404bc21e01fdf74329edad7babf2b0089b7b9c2f4e63f4222ccdf550e542c814c1c92e7a0922a80c3437841ccf2dcd428ab69f9e5500741e9a8f
   languageName: node
   linkType: hard
 
-"@actual-app/core@npm:26.8.1":
-  version: 26.8.1
-  resolution: "@actual-app/core@npm:26.8.1"
+"@actual-app/core@npm:26.9.0":
+  version: 26.9.0
+  resolution: "@actual-app/core@npm:26.9.0"
   dependencies:
     "@jlongster/sql.js": "npm:^1.6.7"
     "@rschedule/core": "npm:^1.5.0"
@@ -38,7 +38,7 @@ __metadata:
     mitt: "npm:^3.0.1"
     uuid: "npm:^14.0.1"
     xml2js: "npm:^0.6.2"
-  checksum: 10c0/3ace46dcc39b68e19cfb957adbf157bc72fb9f9f1cb26319db3797e67d085b7ce0fce33e555b1cf833091b23be2428d74de49b2a13787cf0ce44516a89e06d2f
+  checksum: 10c0/b64073a23de310213cc5690496749b12f4ad4be49e36e9c0095ff8fa3adc8ee285b27f49a2f90c7a958a7e85daffbed26e385c9bb46500bd164a0915c8a88bea
   languageName: node
   linkType: hard
 
@@ -2928,7 +2928,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "callsheet@workspace:."
   dependencies:
-    "@actual-app/api": "npm:^26.8.1"
+    "@actual-app/api": "npm:^26.9.0"
     "@anthropic-ai/sdk": "npm:0.120.0"
     "@changesets/cli": "npm:^2.31.0"
     "@eslint/js": "npm:^10.0.1"

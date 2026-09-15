@@ -1,3 +1,4 @@
+import { formatUnknownError } from './core.js';
 /**
  * Connector diagnostic tool.
  *
@@ -320,8 +321,12 @@ export async function runTests(config: CallsheetConfig, only?: string[]): Promis
     } catch (e) {
       const elapsed = (performance.now() - start) / 1000;
       line(FAIL, `Fetch failed after ${elapsed.toFixed(2)}s`, '');
-      line(FAIL, `${(e as Error).constructor.name}: ${e}`, '');
-      console.log(`${C.DIM}${(e as Error).stack ?? ''}${C.RESET}`);
+      // `${e}` on a plain object renders "[object Object]", which is how nine days of
+      // actual-budget failures stayed unreadable. Everything else in the codebase routes
+      // through formatUnknownError; this path was the one that did not.
+      line(FAIL, `${(e as Error)?.constructor?.name ?? 'Error'}: ${formatUnknownError(e)}`, '');
+      const stack = e instanceof Error ? e.stack : undefined;
+      if (stack) console.log(`${C.DIM}${stack}${C.RESET}`);
       results.push({ name, ok: false, elapsed });
     }
   }
