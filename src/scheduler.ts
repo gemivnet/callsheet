@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import cron, { type ScheduledTask } from 'node-cron';
 import { loadConfig, runPipeline } from './core.js';
 import type { CallsheetConfig } from './types.js';
 
@@ -71,7 +71,7 @@ export async function runGeneration(configPath: string): Promise<void> {
  * Start the cron scheduler for Docker modes.
  * Runs brief generation on the given cron schedule.
  */
-export function startScheduler(schedule: string, configPath: string): cron.ScheduledTask {
+export function startScheduler(schedule: string, configPath: string): ScheduledTask {
   if (!cron.validate(schedule)) {
     throw new Error(`Invalid cron expression: ${schedule}`);
   }
