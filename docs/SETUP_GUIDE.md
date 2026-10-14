@@ -281,6 +281,12 @@ connectors:
 
 Each account needs its own OAuth token (`yarn auth:gcal <name>`). The `name` is what the brief calls that person, so match it to the corresponding entry in `household`.
 
+The calendar works out who each event is for: an event whose title starts with a household member's name ("Name: Practice") belongs to that member, even when it sits on someone else's calendar — list everyone under `household` (see Step 5). Multi-day all-day events carry their real last day (Google's end date is exclusive), overlapping events are reported per person as `conflicts`, and each person's free stretches today (between `day_start_hour` and `day_end_hour`, default 8 and 21) are what the task coach uses to suggest when to do a task. `exclude_patterns` drops events that are on a calendar for reference only:
+
+```yaml
+    exclude_patterns: ["schedule reference", "not attending"]
+```
+
 `lookback_days` controls how much history is available for the week-in-review and for the per-person event counts. `event_categories` optionally labels recurring kinds of event so the brief can cite a count rather than tallying by hand:
 
 ```yaml
@@ -312,13 +318,15 @@ connectors:
     credentials_dir: secrets
     credentials_file: credentials.json
     query: "newer_than:2d -category:promotions -category:social"
-    max_messages: 25
+    max_messages: 40
     accounts:
       - name: Person 1
       - name: Person 2
 ```
 
-The `query` field uses [Gmail search syntax](https://support.google.com/mail/answer/7190).
+The `query` field uses [Gmail search syntax](https://support.google.com/mail/answer/7190). When a query matches more than `max_messages`, the brief is told the window was cut off; raise the limit for a busy inbox.
+
+Each email carries its thread state: `lastFromUs` is true when the household sent the latest message in the conversation, so the brief never turns an email you have already answered into a "reply to" task. One-time codes in subjects and snippets are redacted before anything is sent to the model or saved.
 
 **Useful query patterns:**
 
@@ -346,7 +354,7 @@ connectors:
       - VTI      # Same as VTSAX but ETF
 ```
 
-Add whatever tickers matter to you. Claude only mentions market data if there's a notable move (>2% weekly change by default). Each ticker also pulls recent news headlines.
+Add whatever tickers matter to you. A symbol is mentioned only when its weekly move reaches `move_threshold_pct` (default 3) either way, or on the day it first reaches a 52-week high or low; being near a high on its own is not news. Each ticker also pulls recent news headlines, and carries the trading day its price is from, so a Friday move is not reported again on Monday.
 
 ### Actual Budget
 
@@ -572,50 +580,103 @@ yarn print
 
 ## How the brief improves over time
 
-Three mechanisms feed information from one day's brief into the next. All of
-them live under `output/` and none need setting up.
+Three mechanisms carry information from one day into the next, and one checks
+each brief before it prints. All of them live under `output/` and none need
+setting up.
 
 ### Memory
 
-After each brief, Claude extracts a handful of facts worth carrying forward —
-ongoing situations, things to follow up on — into
-`output/memory/memory_YYYY-MM-DD.json`. The last seven days are injected into
-the next prompt; older files are pruned automatically. Counts and tallies are
-deliberately excluded, since they are only true on the day they were computed.
+After each brief, Claude extracts the open loops worth carrying forward — a
+delivery in transit, a bill or form with a due date, an appointment mentioned
+only in email, a reply being waited on — into
+`output/memory/memory_YYYY-MM-DD.json`. Each fact carries an `until` date and is
+dropped after it, and only the last seven calendar days are ever loaded. Counts,
+the language phrase, markets and weather are never remembered.
 
-Memory is not treated as truth: the prompt tells Claude to prefer today's live
-connector data wherever the two disagree.
+Memory is not treated as evidence: the prompt tells Claude to take facts only
+from today's live data and to use memory just to follow an item across days.
 
-### Self-critique
+### Review before printing
 
-A second, cheaper pass reviews each finished brief against the raw data it was
-built from and writes what it finds to `output/feedback/critique_*.json`. It
-checks for factual errors first — a number that does not match the data, an
-identifier that appears nowhere in it — then for duplication, grouping,
-verbosity and stale items. When the same category recurs on three or more days
-out of seven, it is surfaced to the next brief as a recurring pattern.
+Every brief is checked before it is rendered:
 
-This runs after the brief is written, so it improves tomorrow rather than
-today.
+- **Duplication is removed in code.** An Executive Brief item whose words are
+  mostly one task's or email's words is that item again, and is dropped.
+- **Facts are checked against the data.** A cheap model looks for statements
+  the data contradicts, and must quote the wrong words, quote the data that
+  contradicts them, and give the replacement. A correction is applied — as an
+  exact string replacement — only when both quotes are found where they should
+  be. The language line and the task coach's sections are never touched.
+
+What the review did is written to `output/feedback/review_YYYY-MM-DD.json` for
+you to read; it is not fed back to the writer. To check an existing brief
+against the data it was written from:
+
+```bash
+yarn review              # today's brief
+yarn review 2026-08-22   # a specific date
+```
 
 ### Your own feedback
 
-Create `feedback.md` in the project root (copy `feedback.example.md`) and write
-plain-language notes about what to change. They are injected into every prompt
-until you delete them:
+Put plain-language notes about what you want in `feedback_notes` in
+`config.yaml` (or in a `feedback.md` beside the process — copy
+`feedback.example.md`). They are given to the writer every morning until you
+remove them:
 
-```markdown
-## Active feedback
-
-- Group tasks by theme instead of listing randomly
-- Don't mention weather unless it affects outdoor plans
+```yaml
+feedback_notes: |
+  - Group tasks by theme instead of listing randomly
+  - Don't mention weather unless it affects outdoor plans
 ```
 
-To re-run the critique against an existing brief without generating a new one:
+---
 
-```bash
-yarn review              # yesterday's brief
-yarn review 2026-08-22   # a specific date
+## Task coach
+
+The task coach turns the task list into a plan for the day. Turn it on and
+tune it in `config.yaml`:
+
+```yaml
+task_coach:
+  enabled: true
+  focus_per_person: 3   # tasks per person to put in Today's Focus
+  max_decide: 3         # stuck tasks to make a call on each day
+  capture: true         # add actions found in email/calendar to Todoist
+  max_captures: 3
+  capture_label: callsheet
+  schedule_focus: true  # set undated, non-recurring focus picks to due today
+```
+
+Each morning Claude returns, alongside the brief:
+
+- **focus** — the few tasks per person that matter most today, with a time slot
+  taken from that person's free time (the calendar connector computes it);
+- **decide** — for tasks that are not moving (overdue for a week or more,
+  rescheduled three times, in an inbox for two weeks, untouched for two months,
+  or picked as a focus three times without being done), one recommendation:
+  schedule, first step, hand off, or drop;
+- **capture** — actions found in email or the calendar that are not tasks yet;
+- **capture prompts** — a question or two that jogs memory for tasks nobody
+  wrote down.
+
+Callsheet checks the plan against your Todoist data — a pick must be a real
+task of that person's, a decision must be about a stuck task — and then adds
+the captures to the person's Todoist inbox under `capture_label`, sets undated
+focus picks to today, and prints it all with yesterday's score. A capture is
+skipped when an open task already says much the same thing, and is never
+re-added once made, even if you delete it. Nothing is ever deleted, closed or
+rewritten (closing is `auto_close_tasks`' job, and it needs proof), and nothing
+is written on a dashboard preview. The coach keeps its records in
+`output/tasks/`.
+
+To keep a project that an automation fills (say, one a monitoring job writes
+tasks into) from crowding the page, summarise it instead of listing it:
+
+```yaml
+connectors:
+  todoist:
+    collapse_projects: [Automation]
 ```
 
 ---
@@ -625,19 +686,53 @@ yarn review 2026-08-22   # a specific date
 | Key | Default | What it does |
 | --- | --- | --- |
 | `timezone` | `TZ` env, then system | IANA zone for the brief's date, filenames, connector windows and the scheduler. Set it explicitly. |
-| `auto_close_tasks` | `false` | Lets Claude close Todoist tasks that other sources prove are done. Closures are logged and reported in the next brief. |
-| `weekly_review_day` | off | Day name or `0`-`6` for a short week-in-review section at the top of that day's brief. |
+| `auto_close_tasks` | `false` | Closes Todoist tasks that an email or transaction proves are done. Each closure must quote its evidence, which is checked before anything is touched; at most three per run. Closures are logged and reported in the next brief. |
+| `task_coach` | off | Focus picks, stuck-task decisions and captures — see [Task coach](#task-coach). |
+| `weekly_review_day` | off | Day name or `0`-`6` for a short week-in-review section at the top of that day's brief, and a Housekeeping list of stale `context` entries. |
 | `vacation` | none | Date ranges where brief generation is skipped, inclusive on both ends. Honoured by both the in-container scheduler and the CLI. Pass `--force` to generate anyway. |
-| `notify_webhook` | none | URL posted to as `{title, message}` when brief generation fails. The message is one short ASCII line so it survives an SMS gateway. Without it, a failed brief is silent apart from the printed error page. |
+| `notify_webhook` | none | URL posted to as `{title, message}` when a brief can't be written, isn't printed, gets stuck in the print queue, or a connector fails two scheduled mornings running. One short ASCII line, so it survives an SMS gateway. |
+| `heartbeat_url` | none | Fetched after every scheduled run that produced and printed a brief — e.g. a healthchecks.io check, as a dead-man's switch for runs that never start. |
+| `feedback_notes` | none | Your own notes to the writer (see [Your own feedback](#your-own-feedback)). |
 | `connector_timeout_ms` | `60000` | Per-connector deadline. A connector that hangs past this is abandoned and noted in the brief. |
 
 ```yaml
 timezone: America/New_York
 auto_close_tasks: true
 weekly_review_day: saturday
+notify_webhook: http://relay.example.com/notify
+heartbeat_url: https://hc-ping.com/<your-check-uuid>
 vacation:
   - { start: "2026-07-01", end: "2026-07-14" }
 ```
+
+### Context that expires
+
+`context` entries are prose about the household. Plans change, so an entry can
+carry the last day it is true:
+
+```yaml
+context:
+  people: Two adults, a teenager and a dog.
+  trip:
+    text: Away July 1-14 — the house is empty, pause deliveries.
+    until: "2026-07-14"
+```
+
+An expired entry is left out. A prose entry whose dates have all passed (for
+example "trip May 7-25, 2026" in August) is still given to the writer but
+marked as history, and the weekly review day lists it under Housekeeping so
+you can update it.
+
+### Delivery status
+
+Every run is recorded in `output/status.json`: when it ran, what started it,
+whether the brief was written, and how printing went. `GET /api/status`
+answers `503` when the household did not get its brief — the last scheduled run
+produced an error page or failed to print, or a run that was due never happened
+— and `200` otherwise (`degraded` when a print job sat in the queue). Point an
+uptime monitor at it. `GET /api/health` is a liveness check only, so an image
+updater never rolls back a working container because the printer is out of
+paper.
 
 ---
 
@@ -653,6 +748,9 @@ vacation:
 | `CONFIG_PATH` | `config.yaml` | Path to config file inside container |
 | `OUTPUT_DIR` | `output` | Path to output directory inside container |
 | `PORT` | `3000` | Dashboard port (headed mode only) |
+| `PRINT_BRIEF` | `true` | Set to `false` to generate without printing |
+| `CUPS_SERVER` | none | Where `lp` finds CUPS, e.g. `/run/cups/cups.sock` or `host:631` |
+| `CATCHUP_HOURS` | `6` | How long after a missed scheduled time a brief is still produced late; `0` disables catch-up |
 
 ### Volumes
 
@@ -660,7 +758,14 @@ vacation:
 |-------|---------|
 | `./config.yaml:/app/config.yaml:ro` | Your configuration |
 | `./output:/app/output` | Brief output, memory, usage data, logs |
-| `./secrets:/app/secrets:ro` | OAuth tokens and API credentials |
+| `./secrets:/app/secrets` | OAuth tokens and API credentials (writable: token refreshes persist) |
+| `/run/cups:/run/cups:ro` | The host's CUPS directory, for printing through the host — mount the **directory**, not `cups.sock` |
+
+Mount the CUPS directory rather than the socket file. A single-file bind mount
+binds the file's inode, and CUPS recreates its socket whenever it restarts (on
+many distributions, every night when its logs rotate): the container keeps the
+dead socket and every print fails with "The printer or class does not exist",
+about a printer that is idle on the host.
 
 ### Building
 

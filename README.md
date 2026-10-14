@@ -41,17 +41,42 @@ cron (6:30 AM) or web dashboard trigger
 
 A single-page PDF — every item earns its spot:
 
-- **Executive Brief** — Claude's cross-referenced intelligence: conflicts, weather impacts, email signals, deadline countdowns, budget alerts, logistics
-- **Today's schedule** — calendar events with locations and travel time context
-- **Tasks** — prioritized by what's urgent *today*, not Todoist order. Checkboxes you mark with a pen
-- **Email highlights** — only actionable emails, not a list of everything received
+- **Executive Brief** — up to four cross-referenced insights: conflicts, logistics, deadlines, weather that changes a plan, spending anomalies
+- **Today's Focus** *(task coach)* — a few tasks per person worth doing *today*, each with a time slot from that person's free time, and how yesterday's picks went
+- **Today's schedule** — calendar events, attributed to the person they're for, with spans and computed conflicts
+- **Tasks** — the time-sensitive rest: chores tied to today, bills and forms coming due. Checkboxes you mark with a pen
+- **Stuck — Decide Today** *(task coach)* — tasks that haven't moved in weeks, each with one recommendation: schedule, first step, hand off, or drop
+- **Email highlights** — only emails with news you need, never "reply to" a thread you already answered
 - **Upcoming** — things this week that need preparation, collapsed where repetitive
+- **Added to Todoist** / **Capture** *(task coach)* — what callsheet added to your Todoist from email and the calendar, and a prompt or two to jog memory for tasks nobody wrote down
 
 Sections adapt to the day. Quiet Tuesday? Half-page brief. Packed Thursday before a trip? Dense and focused. Claude doesn't manufacture importance to fill space.
 
-**Memory across days:** After each brief, Claude extracts key insights and saves them. The next day's brief tracks deliveries, follows up on deadlines, and avoids repeating stale observations.
+**Memory across days:** After each brief, open loops (deliveries, due dates, appointments mentioned only in email) are saved with the date they stop mattering, so the next days can follow them after the email ages out.
 
 **Brief diff:** Yesterday's brief is summarized as context so Claude highlights what's new or changed.
+
+**Review before printing:** Executive Brief items that merely restate another section are removed in code, and a fact check compares the brief with the data — a correction is applied only when it quotes both the wrong words and the data that contradicts them, and both quotes check out.
+
+## Task coach
+
+Turn it on with `task_coach: { enabled: true }`. Alongside the brief, Claude returns a plan — focus picks, decisions for stuck tasks, and actions found in email or the calendar that aren't tasks yet. Callsheet checks the plan against your real Todoist data, then:
+
+- adds the captured actions to the right person's Todoist inbox under a label (`callsheet` by default), with any due date the source stated — de-duplicated against open tasks, and never re-added once made, even if you delete it;
+- sets undated, non-recurring focus picks to due today, so they show on your phone;
+- prints the plan, plus yesterday's score.
+
+It never deletes, closes or rewrites a task, and writes nothing on a dashboard preview. Stuck tasks (long overdue, rescheduled again and again, sitting in an inbox for weeks) are asked about once, then left alone for a week. See [the setup guide](docs/SETUP_GUIDE.md#task-coach) for the options.
+
+## Reliability
+
+A printed brief that silently stops is worse than none, so a run is only "done" when the page has come out of the printer:
+
+- **Printing** retries, then watches the CUPS job until it completes. A job that can't be submitted, or sits in the queue, sends an alert to `notify_webhook`.
+- **Missed runs are caught up.** If the host was paused or the container was down at the scheduled time, the brief is produced late (within `CATCHUP_HOURS`, default 6) instead of skipping the day.
+- **Every run is recorded** in `output/status.json`. `GET /api/status` returns `503` when the last scheduled brief failed to generate or print, or a due run never happened — point an uptime monitor at it. `GET /api/health` stays a pure liveness check.
+- **Repeat failures alert.** A connector that fails two scheduled mornings running sends one warning; an optional `heartbeat_url` (e.g. healthchecks.io) is pinged after every good run, as a dead-man's switch.
+- **Stale data is named, not trusted.** Sources report how fresh their data is (a stopped bank import, an alerts outage, a truncated inbox), and the brief says so instead of reporting "$0 spent" or "no alerts".
 
 ## Getting started
 
@@ -132,9 +157,16 @@ context:
 callsheet/
 ├── src/
 │   ├── cli.ts                     # CLI entry point
-│   ├── core.ts                    # Orchestrator: fetch → Claude → PDF → print
+│   ├── core.ts                    # Orchestrator: fetch → Claude → review → PDF → print
+│   ├── tasks.ts                   # Task coach: focus, stuck tasks, captures, Todoist writes
+│   ├── review.ts                  # Pre-print review: dedupe + evidence-bound fact check
+│   ├── autoclose.ts               # Close Todoist tasks that email/transactions prove done
+│   ├── context.ts                 # Household context with expiry and staleness checks
+│   ├── print.ts                   # CUPS printing with retry and job confirmation
+│   ├── status.ts                  # Run status, failure streaks, health evaluation
+│   ├── llm.ts                     # Shared helpers for model responses
 │   ├── server.ts                  # Express API server
-│   ├── scheduler.ts               # node-cron wrapper for Docker modes
+│   ├── scheduler.ts               # node-cron wrapper with catch-up for Docker modes
 │   ├── entrypoint.ts              # Docker MODE dispatcher
 │   ├── usage.ts                   # API cost tracking
 │   ├── render.tsx                 # React PDF components + styling
@@ -153,6 +185,7 @@ callsheet/
 │   │   ├── actual-budget.ts
 │   │   ├── garbage-recycling.ts
 │   │   ├── sun-moon.ts
+│   │   ├── homelab.ts
 │   │   └── language.ts
 │   └── prompts/
 │       └── system.md              # Claude's instructions (tune this!)
@@ -181,14 +214,15 @@ callsheet/
 
 ## Cost
 
-Each brief makes three calls: the brief itself on your configured model, plus
-memory extraction and self-critique on Haiku. A household running most
-connectors sends roughly 20K input tokens per brief.
+Each brief makes one call on your configured model, plus small housekeeping
+calls (memory, fact check, auto-close) on Claude Haiku 5.5 that together cost a
+fraction of a cent. A two-account household running most connectors sends
+roughly 60K input tokens to the brief model.
 
 | Brief model | Per brief | Per month |
 |-------------|-----------|-----------|
-| Sonnet 5 | ~$0.12 | ~$3.50 |
-| Opus 5 | ~$0.18 | ~$5.50 |
+| Sonnet 5.5 (default) | ~$0.25 | ~$7.50 |
+| Opus 5.5 | ~$0.50 | ~$15 |
 
 Connector data volume is the main lever — the **Usage** page in the dashboard
 shows your actual numbers.
