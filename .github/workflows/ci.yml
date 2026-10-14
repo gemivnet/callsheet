@@ -58,7 +58,7 @@ jobs:
           JEST_JUNIT_OUTPUT_NAME: junit.xml
 
       - name: Test report annotations
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@v3
         if: always() && hashFiles('reports/junit.xml') != ''
         with:
           name: Jest Results
