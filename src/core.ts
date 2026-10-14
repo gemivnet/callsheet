@@ -27,6 +27,26 @@ import {
   type FactIssue,
 } from './review.js';
 import {
+  COACH_HEADINGS,
+  PLAN_SCHEMA_PROPERTIES,
+  applyPlan,
+  buildCoachContext,
+  coachSettings,
+  extractPlan,
+  findStuck,
+  loadLedger,
+  observeTasks,
+  readFreeTime,
+  readTodoist,
+  recordDay,
+  yesterdayResults,
+  renderPlan,
+  saveLedger,
+  weekStats,
+  type TaskPlan,
+  type TodoistActionResult,
+} from './tasks.js';
+import {
   buildAutoCloseContext,
   closeTodoistTasks,
   detectResolvableTasks,
@@ -1027,10 +1047,82 @@ function buildErrorBrief(
   };
 }
 
+const ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    label: { type: 'string' },
+    time: { type: 'string' },
+    note: { type: 'string' },
+    checkbox: { type: 'boolean' },
+    highlight: { type: 'boolean' },
+    urgent: { type: 'boolean' },
+  },
+  required: ['label'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * The brief's JSON schema, sent as structured output so the response always
+ * parses. With the task coach on, the plan fields are part of it.
+ */
+export function briefSchema(withPlan: boolean): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      subtitle: { type: 'string' },
+      sections: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            heading: { type: 'string' },
+            items: { type: 'array', items: ITEM_SCHEMA },
+            body: { type: 'string' },
+          },
+          required: ['heading'],
+          additionalProperties: false,
+        },
+      },
+      ...(withPlan ? PLAN_SCHEMA_PROPERTIES : {}),
+    },
+    required: [
+      'title',
+      'sections',
+      ...(withPlan ? ['focus', 'decide', 'capture', 'capture_prompts'] : []),
+    ],
+    additionalProperties: false,
+  };
+}
+
+/** Yesterday's focus results; a corrupt record is no results, never a failed run. */
+function yesterdayResultsSafe(
+  outputDir: string,
+  people: ReturnType<typeof readTodoist>,
+  today: string,
+): ReturnType<typeof yesterdayResults> {
+  try {
+    return yesterdayResults(outputDir, people, today);
+  } catch {
+    return null;
+  }
+}
+
+/** Options for one brief generation. */
+export interface GenerateOptions {
+  /**
+   * Carry out the task coach's plan in Todoist and record it. True for real
+   * runs; false for previews, so a dashboard "generate" never adds tasks or
+   * overwrites the morning's focus record.
+   */
+  applyActions?: boolean;
+}
+
 export async function generateBrief(
   config: CallsheetConfig,
   dataPayload: string,
   connectorIssues: ConnectorIssue[] = [],
+  options: GenerateOptions = {},
 ): Promise<Brief> {
   const apiKey = process.env.ANTHROPIC_API_KEY ?? '';
   if (!apiKey) {
@@ -1054,7 +1146,20 @@ export async function generateBrief(
   const prevBrief = loadPreviousBrief(outputDir);
   const diffContext = prevBrief ? buildDiffContext(prevBrief) : '';
 
+  // Task coach: what the writer needs to plan the day, computed in code.
+  const todayStr = todayYmd(config.timezone, today);
+  const coach = coachSettings(config);
+  const people = coach.enabled ? readTodoist(dataPayload) : [];
+  let ledger = coach.enabled ? observeTasks(loadLedger(outputDir), people, todayStr) : undefined;
+  const stuck = ledger ? findStuck(people, ledger, todayStr, coach.maxDecide + 2) : [];
+  const yesterday = coach.enabled ? yesterdayResultsSafe(outputDir, people, todayStr) : null;
+  const coachContext = coach.enabled
+    ? buildCoachContext(coach, stuck, readFreeTime(dataPayload), yesterday, people)
+    : '';
+  const weekNumbers = weekly && ledger ? weekStats(ledger, todayStr) : null;
+
   let brief: Brief;
+  let plan: TaskPlan;
 
   try {
     const params: Anthropic.MessageCreateParamsNonStreaming = {
@@ -1069,7 +1174,10 @@ export async function generateBrief(
       // returned no brief at all. The judgement calls here are modest —
       // what to include and how to phrase it — and the facts arrive
       // pre-computed, so it does not need to deliberate at that length.
-      output_config: { effort: 'medium' },
+      output_config: {
+        effort: 'medium',
+        format: { type: 'json_schema', schema: briefSchema(coach.enabled) },
+      },
       system: systemPrompt,
       messages: [
         {
@@ -1081,14 +1189,19 @@ export async function generateBrief(
                 'but ALSO add a compact "Week in Review" section as the VERY FIRST section of ' +
                 'the brief (before the Executive Brief). This section must use `body` (not `items`) ' +
                 'and contain a single short paragraph of 2–4 sentences (~60 words max) reflecting ' +
-                'on the past 7 days: notable wins, patterns, themes, or progress. Pull from memory ' +
-                'entries and the 7-day calendar lookback. Keep it retrospective in tone and tight — ' +
-                'it is a supplement, NOT a replacement for the daily brief. Do not repeat week-in-review ' +
-                'content in other sections.\n\n'
+                'on the past 7 days: what actually happened and what got done. Build it ONLY from ' +
+                "the calendar's `recent` events, Todoist's completed tasks and the numbers below — " +
+                'never from memory or earlier briefs, and never claim an outcome (passed, booked, ' +
+                "cleared, approved) unless an email or completed task in today's data says so. " +
+                'It is a supplement, NOT a replacement for the daily brief. Do not repeat week-in-review ' +
+                'content in other sections.\n' +
+                (weekNumbers ? `${weekNumbers}\n` : '') +
+                '\n'
               : '') +
             'Here is all available data from the connected sources:\n' +
             `<data>\n${dataPayload}\n</data>\n` +
             diffContext +
+            coachContext +
             '\n' +
             'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
         },
@@ -1112,7 +1225,8 @@ export async function generateBrief(
     logUsage(outputDir, model, 'brief', response.usage.input_tokens, response.usage.output_tokens);
 
     const text = stripJsonCodeFences(extractResponseText(response));
-    brief = JSON.parse(text) as Brief;
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    ({ brief, plan } = extractPlan(parsed, people, coach, stuck));
 
     // The heading is a fact, not a judgement call, so it is set here rather
     // than taken from the model. Left to the writer it drifted: briefs went
@@ -1131,6 +1245,34 @@ export async function generateBrief(
   // model cost more per day than the brief itself did on some runs.
   await saveMemory(client, CRITIQUE_MODEL, dataPayload, outputDir);
 
+  // Carry the plan out in Todoist (real runs only), then put it on the page.
+  if (coach.enabled && ledger) {
+    let actions: TodoistActionResult | null = null;
+    if (options.applyActions) {
+      actions = await applyPlan(plan, people, config, coach, ledger, todayStr);
+      for (const err of actions.errors) runtimeErrors.add('task_coach', err, 'warning');
+      ledger = recordDay(
+        outputDir,
+        ledger,
+        plan,
+        people,
+        todayStr,
+        yesterday,
+        actions.added.length,
+      );
+      saveLedger(outputDir, ledger);
+    }
+    brief = renderPlan(brief, plan, people, stuck, actions, yesterday, coach);
+    console.log(
+      `  Task coach: ${plan.focus.length} focus pick(s), ${plan.decide.length} decision(s), ` +
+        (actions
+          ? `${actions.added.length} task(s) added, ${actions.scheduled.length} scheduled for today` +
+            (actions.skipped.length ? `, ${actions.skipped.length} capture(s) skipped` : '')
+          : `${plan.capture.length} capture(s) proposed (preview: nothing written)`) +
+        '.',
+    );
+  }
+
   // Review before printing: repeats out of the Executive Brief, in code; then
   // a fact check whose findings must quote both the brief and the data, and
   // are applied as exact replacements only once both quotes are verified.
@@ -1141,7 +1283,13 @@ export async function generateBrief(
     maxTokens: HOUSEKEEPING_MAX_TOKENS,
     warn: (msg) => runtimeErrors.add('fact_check', msg, 'warning'),
   });
-  const verified = verifyFactIssues(factIssues, brief, dataPayload, protectedPrefixes);
+  const verified = verifyFactIssues(
+    factIssues,
+    brief,
+    dataPayload,
+    protectedPrefixes,
+    COACH_HEADINGS,
+  );
   const { brief: corrected, applied } = applyCorrections(brief, verified);
   if (applied.length) {
     brief = corrected;
@@ -1306,7 +1454,9 @@ export async function runPipeline(
   console.log(`Generating brief via Claude (${config.model ?? DEFAULT_MODEL})...`);
   let brief: Brief;
   try {
-    brief = await generateBrief(config, dataPayload, connectorIssues);
+    brief = await generateBrief(config, dataPayload, connectorIssues, {
+      applyActions: !options.preview,
+    });
   } catch (e) {
     // Safety net: if generateBrief throws despite its internal catch,
     // still produce an error brief rather than crashing the whole pipeline.

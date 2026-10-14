@@ -2513,6 +2513,143 @@ describe('runPipeline', () => {
     consoleSpy.mockRestore();
   });
 
+  describe('task coach', () => {
+    const coachConfig: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      task_coach: { enabled: true },
+      connectors: {
+        todoist: { accounts: [{ name: 'Alex', token_env: 'TODOIST_TOKEN_COACH' }] },
+      },
+    };
+    const payload = JSON.stringify([
+      {
+        source: 'todoist',
+        data: {
+          accounts: [
+            {
+              person: 'Alex',
+              backlog: [
+                { id: 't1', content: 'Return the library books', ageDays: 2 },
+                { id: 't2', content: 'Clean the garage', ageDays: 200 },
+              ],
+              recently_completed: [],
+            },
+          ],
+        },
+      },
+      { source: 'google_calendar', data: { free_time_today: { Alex: ['12:00 PM–3:00 PM'] } } },
+    ]);
+    const written = {
+      title: 'T',
+      sections: [{ heading: 'Executive Brief', items: [{ label: 'Quiet day ahead' }] }],
+      focus: [{ person: 'Alex', task_id: 't1', when: '12:30 PM', why: 'due back soon' }],
+      decide: [{ task_id: 't2', action: 'first_step', detail: 'Clear one shelf' }],
+      capture: [{ person: 'Alex', content: 'Pay the water bill', source: 'Water bill email' }],
+      capture_prompts: ['Anything from the meeting to add?'],
+    };
+
+    function queueReplies() {
+      mockMessagesCreate
+        .mockResolvedValueOnce(mockApiResponse(JSON.stringify(written)))
+        .mockResolvedValueOnce(mockApiResponse('[]')) // memory
+        .mockResolvedValueOnce(mockApiResponse('{"issues":[]}')); // fact check
+      mockReadFileSync.mockImplementation((p: unknown) =>
+        String(p).includes('system.md') ? 'System prompt.' : '{}',
+      );
+      mockExistsSync.mockReturnValue(false);
+      mockReaddirSync.mockReturnValue([]);
+    }
+
+    afterEach(() => {
+      delete process.env.TODOIST_TOKEN_COACH;
+      delete (globalThis as { fetch?: unknown }).fetch;
+    });
+
+    it('plans the day, carries the plan out in Todoist and prints it', async () => {
+      queueReplies();
+      process.env.TODOIST_TOKEN_COACH = 'tok';
+      const fetchSpy = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('{"id":"new-1"}'),
+      });
+      (globalThis as { fetch?: unknown }).fetch = fetchSpy;
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      const brief = await core.generateBrief(coachConfig, payload, [], { applyActions: true });
+
+      const call = mockMessagesCreate.mock.calls[0][0] as {
+        output_config: { format: { schema: { properties: Record<string, unknown> } } };
+        messages: { content: string }[];
+      };
+      expect(call.output_config.format.schema.properties).toHaveProperty('focus');
+      expect(call.messages[0].content).toContain('<task_coach>');
+      expect(call.messages[0].content).toContain(
+        '[t2] Alex: "Clean the garage" — untouched for 200 days',
+      );
+
+      const headings = brief.sections.map((s) => s.heading);
+      expect(headings).toEqual([
+        'Executive Brief',
+        "Today's Focus",
+        'Stuck — Decide Today',
+        'Added to Todoist',
+        'Capture',
+      ]);
+      expect(brief.sections[1].items?.[0]).toMatchObject({
+        label: 'Return the library books',
+        time: '12:30 PM',
+      });
+
+      const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+      expect(urls).toContain('https://api.todoist.com/api/v1/tasks');
+      expect(urls).toContain('https://api.todoist.com/api/v1/tasks/t1');
+      const writes = mockWriteFileSync.mock.calls.map((c) => String(c[0]));
+      expect(writes.some((p) => p.endsWith('ledger.json'))).toBe(true);
+      expect(writes.some((p) => /focus_\d{4}-\d{2}-\d{2}\.json$/.test(p))).toBe(true);
+      expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+        '  Task coach: 1 focus pick(s), 1 decision(s), 1 task(s) added, 1 scheduled for today.',
+      );
+      logSpy.mockRestore();
+    });
+
+    it('writes nothing to Todoist or the ledger on a preview', async () => {
+      queueReplies();
+      const fetchSpy = jest.fn();
+      (globalThis as { fetch?: unknown }).fetch = fetchSpy;
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      const brief = await core.generateBrief(coachConfig, payload);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(brief.sections.map((s) => s.heading)).not.toContain('Added to Todoist');
+      expect(brief.sections.map((s) => s.heading)).toContain("Today's Focus");
+      expect(mockWriteFileSync.mock.calls.some((c) => String(c[0]).endsWith('ledger.json'))).toBe(
+        false,
+      );
+      expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+        '  Task coach: 1 focus pick(s), 1 decision(s), 1 capture(s) proposed (preview: nothing written).',
+      );
+      logSpy.mockRestore();
+    });
+
+    it('reports Todoist failures as run warnings', async () => {
+      queueReplies();
+      process.env.TODOIST_TOKEN_COACH = 'tok';
+      (globalThis as { fetch?: unknown }).fetch = jest
+        .fn()
+        .mockResolvedValue({ ok: false, status: 401, text: () => Promise.resolve('') });
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      await core.generateBrief(coachConfig, payload, [], { applyActions: true });
+
+      const warnings = core.runtimeErrors.drain();
+      expect(warnings.some((w) => w.source === 'task_coach' && w.error.includes('401'))).toBe(true);
+      logSpy.mockRestore();
+    });
+  });
+
   it('should include runtime errors in error brief', async () => {
     // Add a runtime error before generating
     core.runtimeErrors.add('test_pipeline', 'something broke', 'error');
