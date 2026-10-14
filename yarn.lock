@@ -3317,7 +3317,7 @@ __metadata:
     "@types/react-dom": "npm:^19.3.0"
     "@types/suncalc": "npm:^1"
     commander: "npm:^13.1.0"
-    dotenv: "npm:^16.5.0"
+    dotenv: "npm:^18.0.7"
     esbuild: "npm:^0.28.2"
     eslint: "npm:^10.12.0"
     eslint-config-prettier: "npm:^10.1.8"
@@ -3675,10 +3675,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dotenv@npm:^16.5.0":
-  version: 16.6.1
-  resolution: "dotenv@npm:16.6.1"
-  checksum: 10c0/15ce56608326ea0d1d9414a5c8ee6dcf0fffc79d2c16422b4ac2268e7e2d76ff5a572d37ffe747c377de12005f14b3cc22361e79fc7f1061cce81f77d2c973dc
+"dotenv@npm:^18.0.7":
+  version: 18.0.7
+  resolution: "dotenv@npm:18.0.7"
+  bin:
+    dotenv: dist/index.cjs
+  checksum: 10c0/bda2efbfa3194eec5ae592308db16285a3e163b505282a052ec9e10538be1c6a526f0437b431e78183e9bd367db0ad7c446d0180ab62310bc0a384787bec8894
   languageName: node
   linkType: hard
 
