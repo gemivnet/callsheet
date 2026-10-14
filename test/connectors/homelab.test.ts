@@ -56,6 +56,22 @@ describe('homelab connector', () => {
       expect(description).not.toMatch(/at least one line/i);
     });
 
+    it('asks for the overnight work and the open items in full when detail is full', async () => {
+      const path = await doc({ severity: 'WARN', action_taken: true, generated_at: hoursAgo(1) });
+      const { description } = await create({ path, detail: 'full' }).fetch();
+      expect(description).toMatch(/Summarise what was done/);
+      expect(description).toMatch(/give items that need them a place in Tasks/);
+      expect(description).not.toMatch(/This is a household page/);
+      const quiet = await create({ path, detail: 'full' }).fetch();
+      expect(quiet.description).toContain('Never reproduce credentials');
+    });
+
+    it('in full detail, still does not imply work that did not happen', async () => {
+      const path = await doc({ severity: 'INFO', action_taken: false, generated_at: hoursAgo(1) });
+      const { description } = await create({ path, detail: 'full' }).fetch();
+      expect(description).toMatch(/Nothing was changed overnight/i);
+    });
+
     it('does not imply work happened when none did', async () => {
       const path = await doc({ severity: 'INFO', action_taken: false, generated_at: hoursAgo(1) });
       const { description } = await create({ path }).fetch();

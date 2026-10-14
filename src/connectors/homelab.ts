@@ -44,6 +44,10 @@ export function create(config: ConnectorConfig): Connector {
   const path = str(config.path, '');
   const label = str(config.label, 'infrastructure');
   const staleHours = Number(config.stale_hours ?? DEFAULT_STALE_HOURS);
+  // `household` (default) keeps the report to what touches daily life;
+  // `full` asks for the overnight work and the open items in full, for a
+  // household that wants the infrastructure on the page.
+  const detail = config.detail === 'full' ? 'full' : 'household';
 
   return {
     name: 'homelab',
@@ -75,10 +79,19 @@ export function create(config: ConnectorConfig): Connector {
             : `It is ${ageHours.toFixed(1)} hours old, which is current.`,
           `Severity is ${severity}.`,
           'If severity is INFO and nothing in the document needs a decision, omit this entirely — do not pad the brief with "all systems normal".',
-          doc.action_taken
-            ? 'Work was carried out overnight. Mention it in one line only when the household would notice or care — something they use was fixed, or a security problem was closed. Routine upkeep (restarts, clean-ups, downloads, re-imports) is not news.'
-            : 'Nothing was changed overnight, so do not imply that it was.',
-          'This is a household page. Only items that touch daily life — food safety (fridge and freezer temperatures), locks and doors, leaks, internet, cameras, power — belong in the Executive Brief or Tasks; everything else is at most one short line in total.',
+          ...(detail === 'full'
+            ? [
+                doc.action_taken
+                  ? 'Work was carried out overnight. Summarise what was done in a short line or two — the reader wants to know what was handled on their behalf. The outcome matters, not the mechanism.'
+                  : 'Nothing was changed overnight, so do not imply that it was.',
+                'The reader wants infrastructure on the page: give items that need them a place in Tasks, most important first, and lead with items that touch daily life — food safety (fridge and freezer temperatures), locks and doors, leaks, internet, cameras, power.',
+              ]
+            : [
+                doc.action_taken
+                  ? 'Work was carried out overnight. Mention it in one line only when the household would notice or care — something they use was fixed, or a security problem was closed. Routine upkeep (restarts, clean-ups, downloads, re-imports) is not news.'
+                  : 'Nothing was changed overnight, so do not imply that it was.',
+                'This is a household page. Only items that touch daily life — food safety (fridge and freezer temperatures), locks and doors, leaks, internet, cameras, power — belong in the Executive Brief or Tasks; everything else is at most one short line in total.',
+              ]),
           'If something needs a person to act, lead with what and why, and keep it to the decision rather than the diagnosis.',
           'Never reproduce credentials, tokens, file paths or network addresses from this document into the brief.',
         ].join(' '),
