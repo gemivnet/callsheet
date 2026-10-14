@@ -780,4 +780,22 @@ describe('calendar connector: roster, spans, exclusions, conflicts', () => {
     const free = result.data.free_time_today as Record<string, string[]>;
     expect(Object.keys(free)).toEqual(['Alex', 'Jo']);
   });
+
+  it('counts free time from now when the brief is written after the day has begun', async () => {
+    setupCredsAndToken();
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date());
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(`${today}T17:40:00Z`));
+    mockEventsList.mockResolvedValue({ data: { items: [] } });
+    try {
+      const result = await create({
+        enabled: true,
+        timezone: 'UTC',
+        lookback_days: 0,
+        accounts: [{ name: 'Alex', calendar_ids: ['primary'] }],
+      }).fetch();
+      expect(result.data.free_time_today).toEqual({ Alex: ['5:45 PM–9:00 PM'] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });

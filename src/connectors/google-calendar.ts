@@ -641,12 +641,18 @@ export function create(config: ConnectorConfig): Connector {
       const conflicts = findConflicts(slots);
       const dayStart = zonedDayStart(today_ymd, tz).getTime();
       const roster = [...new Set([...(accounts ?? []).map((a) => a.name), ...householdNames])];
+      // Count from now when the brief is written after the day has begun (a
+      // dashboard regeneration in the afternoon), rounded up to the quarter
+      // hour, so no stretch that has already passed is offered for a task.
+      const nowMs = Math.ceil(Date.now() / 900_000) * 900_000;
       const freeToday = freeWindows(
         slots.filter((sl) => sl.date === today_ymd),
         roster,
         dayStart + dayStartHour * 3_600_000,
         dayStart + dayEndHour * 3_600_000,
         tz,
+        45,
+        nowMs,
       );
 
       const aggregates = buildAggregates(
