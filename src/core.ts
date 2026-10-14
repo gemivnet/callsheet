@@ -12,13 +12,20 @@ import Anthropic from '@anthropic-ai/sdk';
 import yaml from 'js-yaml';
 import type { CallsheetConfig, ConnectorResult, Brief, HouseholdMember } from './types.js';
 import { loadConnectors } from './connectors/index.js';
-import { recordBriefPhrase } from './connectors/language.js';
+import { recordBriefPhrase, languageLabelPrefix } from './connectors/language.js';
 import { renderPdf } from './render.js';
 import { logUsage } from './usage.js';
 import { todayYmd, shiftYmd, formatLongDate } from './dates.js';
 import { deriveStationsFromEvents, type AirportAlias } from './airports.js';
 import { printAndConfirm, type PrintOptions, type PrintResult } from './print.js';
 import { extractResponseText, stripJsonCodeFences } from './llm.js';
+import {
+  applyCorrections,
+  dedupeExecutiveBrief,
+  factCheckBrief,
+  verifyFactIssues,
+  type FactIssue,
+} from './review.js';
 import {
   buildAutoCloseContext,
   closeTodoistTasks,
@@ -73,17 +80,6 @@ interface BriefResponse {
 export function supportsServerFallback(model: string): boolean {
   return SERVER_FALLBACK_MODELS.has(model);
 }
-
-/**
- * How much of the raw payload the self-critique sees.
- *
- * Sized to fit a whole day's data rather than to a token budget. A reviewer
- * that only sees part of the payload reports everything past the cut as
- * unsupported, and those false findings feed straight into the next day's
- * prompt as things to correct. Haiku's context is far larger than this and
- * the pass costs a fraction of a cent either way.
- */
-const CRITIQUE_PAYLOAD_CHARS = 200_000;
 
 // ---------------------------------------------------------------------------
 // RuntimeErrors — global collector for any error conditions during a run.
@@ -521,339 +517,64 @@ export async function saveMemory(
 }
 
 // ---------------------------------------------------------------------------
-// Feedback loop — user notes + self-critique history that improve future briefs
+// Feedback — notes the household writes about how they want the brief
 // ---------------------------------------------------------------------------
 
-const FEEDBACK_DIR = 'feedback';
-const MAX_CRITIQUE_DAYS = 7;
+const REVIEW_DIR = 'feedback';
 
-interface CritiqueEntry {
-  date: string;
-  issues: string[];
-  /**
-   * Issues the same-run repair pass actually fixed. They stay in `issues` —
-   * the writer still made the mistake, so the category should keep counting
-   * toward the recurring warning — but they are filtered out of the concrete
-   * examples, which would otherwise cite problems the reader never saw.
-   */
-  repaired?: string[];
-}
-
-function loadFeedbackNotes(): string {
-  // User-written feedback file — lives in project root, not output dir
+/**
+ * The household's own notes on how to improve the brief, from `feedback_notes`
+ * in config and/or a `feedback.md` beside the process.
+ *
+ * Self-critique findings used to be appended here too, as a "RECURRING
+ * quality problems" banner and a list of recent examples. Across six months
+ * the banner flagged duplication on almost every prompt and the duplication
+ * rate never moved, while false findings in the examples taught the writer
+ * the wrong lessons. Review results now go to a log for people to read; only
+ * people's notes go to the writer.
+ */
+export function buildFeedbackContext(config: CallsheetConfig = {}): string {
+  const notes: string[] = [];
+  if (typeof config.feedback_notes === 'string' && config.feedback_notes.trim()) {
+    notes.push(config.feedback_notes.trim());
+  }
   const feedbackPath = join(process.cwd(), 'feedback.md');
-  if (!existsSync(feedbackPath)) return '';
-
-  const raw = readFileSync(feedbackPath, 'utf-8').trim();
-  if (!raw) return '';
+  if (existsSync(feedbackPath)) {
+    const raw = readFileSync(feedbackPath, 'utf-8').trim();
+    if (raw) notes.push(raw);
+  }
+  if (!notes.length) return '';
 
   return (
     '\n\n## User feedback\n\n' +
     'The user has left these notes about how to improve the brief. Follow them:\n\n' +
-    raw +
+    notes.join('\n\n') +
     '\n'
   );
 }
 
-function loadRecentCritiques(outputDir: string): CritiqueEntry[] {
-  const critiqueDir = join(outputDir, FEEDBACK_DIR);
-  if (!existsSync(critiqueDir)) return [];
-
-  const files = readdirSync(critiqueDir)
-    .filter((f) => f.startsWith('critique_') && f.endsWith('.json'))
-    .sort()
-    .slice(-MAX_CRITIQUE_DAYS);
-
-  return files.map((f) => {
-    try {
-      return JSON.parse(readFileSync(join(critiqueDir, f), 'utf-8')) as CritiqueEntry;
-    } catch {
-      return { date: f, issues: [] };
-    }
-  });
+/** What the review did to today's brief, kept for people (and audits), not for the writer. */
+interface ReviewLog {
+  date: string;
+  removedDuplicates: string[];
+  factIssues: FactIssue[];
+  corrected: FactIssue[];
 }
 
-/** Issue categories the self-critique prompt uses as prefixes. */
-const CRITIQUE_CATEGORIES = [
-  'Factual accuracy',
-  'Duplication',
-  'Verbosity',
-  'Missing data',
-  'Poor grouping',
-  'Stale items',
-] as const;
-type CritiqueCategory = (typeof CRITIQUE_CATEGORIES)[number];
-
-/** A category recurring on this many critique days (out of 7) is flagged as repeated. */
-const RECURRING_THRESHOLD_DAYS = 3;
-
-/** Specific guidance per category — what the model should actually do differently. */
-const CATEGORY_REMEDIES: Record<CritiqueCategory, string> = {
-  'Factual accuracy':
-    'Statements in the brief did not match the underlying data. Before returning, re-check every number, name, date and identifier against the raw payload. Counts must come from a structured aggregate, never from your own tally; identifiers must be copied from the data, never recalled.',
-  Duplication:
-    'The SAME topic keeps landing in multiple sections. Before you return the brief, walk each Executive Brief item and delete it if the same topic also appears in Tasks, Email Highlights, or Upcoming. Pick ONE home per topic and live with the choice.',
-  Verbosity:
-    'Executive Brief items are too long and technical for a printed brief. Cap each at a single scannable line. Raw METAR, stock math, tracking numbers, and budget percentages belong in the underlying data — not in the bullet.',
-  'Missing data':
-    "Actionable items in the raw data (calendar, email, Todoist) keep getting dropped from the brief. Before finalizing, scan the raw data one more time for events, emails, and tasks that belong in today's brief but aren't in your draft.",
-  'Poor grouping':
-    'Tasks are jumping between unrelated domains. Cluster them by theme (interview prep, travel, medical, home) so the reader can scan one block at a time.',
-  'Stale items':
-    "Items are being pulled forward from memory or previous briefs without appearing in today's live data. If an item isn't backed by today's connector data, drop it.",
-};
-
-/**
- * Variants the critique model actually emits. It is told to use the six
- * categories and mostly does, but it free-forms the edges — "Stale item"
- * singular alone accounted for 22 issues that the exact-prefix match dropped,
- * so they never counted toward the recurring-pattern threshold.
- */
-const CATEGORY_SYNONYMS: Record<string, CritiqueCategory> = {
-  'stale item': 'Stale items',
-  'stale data': 'Stale items',
-  'stale reference': 'Stale items',
-  'stale/incorrect': 'Stale items',
-  'stale/unclear': 'Stale items',
-  'missing event': 'Missing data',
-  'missing context': 'Missing data',
-  'date mismatch': 'Factual accuracy',
-  'data mismatch': 'Factual accuracy',
-};
-
-function categorizeIssue(issue: string): CritiqueCategory | null {
-  const colon = issue.indexOf(':');
-  if (colon <= 0 || colon > 40) return null;
-  const prefix = issue.slice(0, colon).trim().toLowerCase();
-  for (const cat of CRITIQUE_CATEGORIES) {
-    const c = cat.toLowerCase();
-    if (prefix === c || prefix === c.replace(/s$/, '') || prefix === `${c}s`) return cat;
-  }
-  return CATEGORY_SYNONYMS[prefix] ?? null;
-}
-
-export function buildFeedbackContext(outputDir: string): string {
-  let ctx = '';
-
-  // User feedback notes
-  ctx += loadFeedbackNotes();
-
-  const critiques = loadRecentCritiques(outputDir);
-  if (!critiques.length) return ctx;
-
-  // Count distinct DAYS each category shows up on, not total issue count.
-  // A category that appears on 5 of the last 7 days is a real pattern.
-  const daysByCategory = new Map<CritiqueCategory, Set<string>>();
-  for (const entry of critiques) {
-    for (const issue of entry.issues) {
-      const cat = categorizeIssue(issue);
-      if (!cat) continue;
-      if (!daysByCategory.has(cat)) daysByCategory.set(cat, new Set());
-      daysByCategory.get(cat)!.add(entry.date);
-    }
-  }
-
-  const recurring = [...daysByCategory.entries()]
-    .filter(([, days]) => days.size >= RECURRING_THRESHOLD_DAYS)
-    .sort((a, b) => b[1].size - a[1].size);
-
-  if (recurring.length) {
-    ctx += '\n\n## RECURRING quality problems — you have made these mistakes repeatedly\n\n';
-    ctx +=
-      'Your self-critique has flagged these SAME problems in multiple recent briefs. ' +
-      'This is the most important section of your instructions: if you do nothing else, fix these today.\n\n';
-    for (const [cat, days] of recurring) {
-      ctx += `- **${cat}** (${days.size} of the last ${critiques.length} days) — ${CATEGORY_REMEDIES[cat]}\n`;
-    }
-  }
-
-  // Also list recent specific examples so the model has concrete anchors.
-  const recentSpecifics = critiques
-    .slice(-3)
-    .flatMap((c) => {
-      const fixed = new Set(c.repaired ?? []);
-      return c.issues.filter((i) => !fixed.has(i));
-    })
-    .filter((issue, i, arr) => arr.indexOf(issue) === i)
-    .slice(-8);
-
-  if (recentSpecifics.length) {
-    ctx += '\n### Recent specific examples flagged by self-critique\n\n';
-    for (const issue of recentSpecifics) {
-      ctx += `- ${issue}\n`;
-    }
-  }
-
-  return ctx;
-}
-
-export async function critiqueBrief(
-  client: Anthropic,
-  brief: Brief,
-  dataPayload: string,
-  outputDir: string,
-): Promise<string[]> {
+function saveReviewLog(outputDir: string, log: ReviewLog): void {
   try {
-    const response = await client.messages.create({
-      model: CRITIQUE_MODEL, // Use Haiku for cheap self-review
-      max_tokens: HOUSEKEEPING_MAX_TOKENS,
-      output_config: { effort: 'low' },
-      system:
-        'You are a quality reviewer for a daily household brief. ' +
-        'Analyze the brief against the raw data it was built from. Return a JSON array of 0-5 short strings describing problems found. ' +
-        'Prefix each string with its category. Check for:\n' +
-        '- Factual accuracy: anything the brief asserts that the raw data does not support — a count that does not match the data, ' +
-        'a name or identifier that appears nowhere in the payload, a date or weekday that contradicts the event, an invented detail. ' +
-        'Verify every number in the brief by finding it in the data. This is the most important category: a brief that reads well ' +
-        'but states a wrong number is worse than a clumsy one that is correct. ' +
-        'Two cautions before you report one: `recent` and `upcoming` cover different periods, so check a statement about what ' +
-        'already happened against `recent` alone and one about what is coming against `upcoming` alone; and search the whole ' +
-        'payload before calling something unsupported, including every calendar bucket — do not report a claim as unsupported ' +
-        'merely because you did not come across it.\n' +
-        '- Duplication: same topic appearing in multiple sections (e.g. exec brief AND tasks)\n' +
-        '- Poor grouping: tasks that jump between unrelated topics instead of clustering by theme\n' +
-        "- Missing data: tasks, calendar events, or emails in the raw data that should have been surfaced but weren't\n" +
-        "- Stale items: items from memory that don't appear in today's live data\n" +
-        '- Verbosity: items that are too long or wordy for a printed brief\n' +
-        'If the brief is good, return an empty array []. Return ONLY the JSON array.',
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Today's brief:\n${JSON.stringify(brief, null, 2)}\n\n` +
-            `Raw data (key sources):\n${dataPayload.slice(0, CRITIQUE_PAYLOAD_CHARS)}`,
-        },
-      ],
-    });
-
-    logUsage(
-      outputDir,
-      CRITIQUE_MODEL,
-      'critique',
-      response.usage.input_tokens,
-      response.usage.output_tokens,
-    );
-
-    const text = stripJsonCodeFences(extractResponseText(response));
-    const issues = JSON.parse(text) as string[];
-
-    if (issues.length) {
-      const critiqueDir = join(outputDir, FEEDBACK_DIR);
-      mkdirSync(critiqueDir, { recursive: true });
-      const today = todayYmd();
-      const entry: CritiqueEntry = { date: today, issues };
-      writeFileSync(join(critiqueDir, `critique_${today}.json`), JSON.stringify(entry, null, 2));
-    }
-
-    return issues;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log(`  Warning: Self-critique failed: ${msg}`);
-    runtimeErrors.add('self_critique', msg, 'warning');
-    return [];
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Repair pass — apply today's critique to today's brief
-// ---------------------------------------------------------------------------
-
-/**
- * Categories worth repairing automatically. Both have an objective answer: an
- * item is either in two sections or it is not, and a stated fact either matches
- * the payload or it does not. Verbosity and grouping are judgement calls where a
- * second pass is as likely to damage a good brief as improve it, so they stay
- * with the writer and the feedback prompt.
- */
-const REPAIRABLE_CATEGORIES: ReadonlySet<CritiqueCategory> = new Set([
-  'Duplication',
-  'Factual accuracy',
-]);
-
-/**
- * The critique already runs before the PDF is rendered, so until now the system
- * diagnosed today's brief, wrote the diagnosis down for tomorrow, and printed the
- * flawed brief anyway. Six months of output says that does not converge:
- * Duplication was 45% of all logged issues and its rate never fell, despite the
- * feedback prompt naming it as recurring on 7 of the last 7 days. Fixing the
- * artifact in hand is strictly better than warning the next one.
- */
-export async function repairBrief(
-  client: Anthropic,
-  model: string,
-  brief: Brief,
-  issues: string[],
-  outputDir: string,
-): Promise<{ brief: Brief; repaired: string[] }> {
-  const actionable = issues.filter((i) => {
-    const cat = categorizeIssue(i);
-    return cat !== null && REPAIRABLE_CATEGORIES.has(cat);
-  });
-  if (!actionable.length) return { brief, repaired: [] };
-
-  try {
-    const response = await withRetry(
-      () =>
-        client.messages.create({
-          model,
-          max_tokens: 20_000,
-          // Editing to an explicit list of defects needs far less deliberation
-          // than writing the brief did.
-          output_config: { effort: 'low' },
-          system:
-            'You repair an already-written household brief. You are given the brief as JSON and a list of ' +
-            'problems found in review. Fix ONLY those problems. Change nothing else: same schema, same ' +
-            'sections, same order, and identical wording everywhere the review did not object.\n\n' +
-            'Duplication — the same topic appears in more than one section. Keep it where it is most ' +
-            'actionable and delete the other copy. The Executive Brief earns a topic only when it adds a ' +
-            'cross-source insight the owning section does not carry (a conflict, a consequence, a deadline); ' +
-            'if it merely restates, delete it from the Executive Brief and leave the owning section alone.\n' +
-            'Factual accuracy — the review states the correct value. Apply it exactly as given.\n\n' +
-            'If removing items empties a section, drop that section. Return ONLY the corrected JSON — no ' +
-            'explanation, no code fences.',
-          messages: [
-            {
-              role: 'user',
-              content:
-                `Brief:\n${JSON.stringify(brief, null, 2)}\n\n` +
-                `Problems to fix:\n${actionable.map((i) => `- ${i}`).join('\n')}\n\n` +
-                'Return the corrected brief JSON now.',
-            },
-          ],
-        }),
-      'brief repair',
-    );
-
-    logUsage(outputDir, model, 'repair', response.usage.input_tokens, response.usage.output_tokens);
-
-    const text = stripJsonCodeFences(extractResponseText(response));
-    const parsed = JSON.parse(text) as Brief;
-    // A repair that returns something structurally unusable is worse than no
-    // repair, so fail closed onto the original.
-    if (!parsed || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
-      throw new Error('repair returned no sections');
-    }
-    return { brief: parsed, repaired: actionable };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log(`  Warning: repair pass failed, keeping the original brief: ${msg}`);
-    runtimeErrors.add('brief_repair', msg, 'warning');
-    return { brief, repaired: [] };
-  }
-}
-
-/** Mark which of today's logged issues the repair pass actually fixed. */
-function recordRepairedIssues(outputDir: string, repaired: string[]): void {
-  if (!repaired.length) return;
-  try {
-    const path = join(outputDir, FEEDBACK_DIR, `critique_${todayYmd()}.json`);
-    if (!existsSync(path)) return;
-    const entry = JSON.parse(readFileSync(path, 'utf-8')) as CritiqueEntry;
-    entry.repaired = repaired;
-    writeFileSync(path, JSON.stringify(entry, null, 2));
+    const dir = join(outputDir, REVIEW_DIR);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `review_${log.date}.json`), JSON.stringify(log, null, 2));
   } catch {
-    /* the critique file is a hint for tomorrow, never worth failing a run over */
+    /* a review log is for reading later, never worth failing a run over */
   }
+}
+
+/** Language-phrase label prefixes, which the review must never edit or remove. */
+function protectedLabelPrefixes(config: CallsheetConfig): string[] {
+  const prefix = languageLabelPrefix(config);
+  return prefix ? [`${prefix}:`] : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -1098,8 +819,8 @@ function loadPrompt(config: CallsheetConfig): string {
   const memories = loadRecentMemories(outputDir);
   prompt += buildMemoryContext(memories);
 
-  // Load feedback loop context (user notes + self-critique history)
-  prompt += buildFeedbackContext(outputDir);
+  // The household's own notes on what they want from the brief
+  prompt += buildFeedbackContext(config);
 
   // Load auto-close notifications from yesterday
   prompt += buildAutoCloseContext(outputDir);
@@ -1318,37 +1039,39 @@ export async function generateBrief(
   // model cost more per day than the brief itself did on some runs.
   await saveMemory(client, CRITIQUE_MODEL, dataPayload, outputDir);
 
-  // Self-critique: review the brief for quality issues (uses Haiku, ~$0.001)
-  const issues = await critiqueBrief(client, brief, dataPayload, outputDir);
-  if (issues.length) {
-    console.log(`  Self-critique: ${issues.length} issue(s).`);
-    // Act on it now rather than only warning tomorrow's writer.
-    const { brief: repairedBrief, repaired } = await repairBrief(
-      client,
-      model,
-      brief,
-      issues,
-      outputDir,
-    );
-    if (repaired.length) {
-      brief = repairedBrief;
-      // The date is derived, not written — a repair must never move it.
-      brief.title = dateStr;
-      recordRepairedIssues(outputDir, repaired);
-      console.log(`  Repair pass: fixed ${repaired.length} of them in today's brief.`);
-    }
-    const carried = issues.length - repaired.length;
-    if (carried > 0) {
-      console.log(`  ${carried} issue(s) logged for future improvement.`);
-    }
-  } else {
-    console.log('  Self-critique: no issues found.');
+  // Review before printing: repeats out of the Executive Brief, in code; then
+  // a fact check whose findings must quote both the brief and the data, and
+  // are applied as exact replacements only once both quotes are verified.
+  const protectedPrefixes = protectedLabelPrefixes(config);
+  const deduped = dedupeExecutiveBrief(brief, protectedPrefixes);
+  brief = deduped.brief;
+  const factIssues = await factCheckBrief(client, CRITIQUE_MODEL, brief, dataPayload, outputDir, {
+    maxTokens: HOUSEKEEPING_MAX_TOKENS,
+    warn: (msg) => runtimeErrors.add('fact_check', msg, 'warning'),
+  });
+  const verified = verifyFactIssues(factIssues, brief, dataPayload, protectedPrefixes);
+  const { brief: corrected, applied } = applyCorrections(brief, verified);
+  if (applied.length) {
+    brief = corrected;
+    // The date is derived, not written — a correction must never move it.
+    brief.title = dateStr;
   }
+  console.log(
+    `  Review: ${deduped.removed.length} repeated Executive Brief item(s) removed; ` +
+      `${factIssues.length} fact issue(s) reported, ${verified.length} verified, ` +
+      `${applied.length} corrected.`,
+  );
+  saveReviewLog(outputDir, {
+    date: todayYmd(),
+    removedDuplicates: deduped.removed,
+    factIssues,
+    corrected: applied,
+  });
 
   // Record today's language phrase into its own long-horizon history so
   // tomorrow's brief can avoid repeating it. Lives separately from the
   // shared memory bucket because it needs a longer retention window.
-  // Runs AFTER any repair so the recorded phrase is the one that was printed.
+  // Runs AFTER the review so the recorded phrase is the one that was printed.
   recordBriefPhrase(brief, config);
 
   // Auto-close: optionally close Todoist tasks proven resolved by other data sources
