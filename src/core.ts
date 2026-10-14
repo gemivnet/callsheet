@@ -817,8 +817,10 @@ function buildConnectorIssuesContext(
 
   let ctx = '\n\n## Issues during this run\n\n';
   ctx +=
-    'The following problems occurred. Mention them in the Executive Brief so the household ' +
-    'knows what data may be missing or degraded:\n\n';
+    'The following problems occurred. Name the affected sources once, in a single short line ' +
+    'at the end of the Executive Brief, so the household knows what may be missing — and draw ' +
+    'no conclusions from those sources. Internal warnings (memory, review, auto-close, task ' +
+    'coach) are for the maintainers, not the household: leave them off the page.\n\n';
 
   for (const issue of issues) {
     ctx += `- **${issue.connector}** (connector): ${issue.error}\n`;
