@@ -85,7 +85,12 @@ export interface CallsheetConfig {
   timezone?: string;
   /** Everyone the brief is about, including people with no connector accounts. */
   household?: HouseholdMember[];
-  context?: Record<string, string>;
+  /**
+   * Background about the household, by topic. A value is prose, or
+   * `{ text, until }` to drop it automatically after `until` (YYYY-MM-DD).
+   * Prose whose dates have all passed is marked as history for the writer.
+   */
+  context?: Record<string, string | { text: string; until?: string }>;
   /**
    * Free-text notes to the brief writer about what the household wants from
    * the brief ("never list games we are not attending"). Same purpose as a

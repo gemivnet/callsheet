@@ -17,6 +17,7 @@ import { renderPdf } from './render.js';
 import { logUsage } from './usage.js';
 import { todayYmd, shiftYmd, formatLongDate } from './dates.js';
 import { deriveStationsFromEvents, type AirportAlias } from './airports.js';
+import { prepareContext } from './context.js';
 import { printAndConfirm, type PrintOptions, type PrintResult } from './print.js';
 import { extractResponseText, stripJsonCodeFences } from './llm.js';
 import {
@@ -909,11 +910,21 @@ function loadPrompt(config: CallsheetConfig): string {
 
   prompt += buildHouseholdContext(config.household);
 
-  const context = config.context ?? {};
-  if (Object.keys(context).length > 0) {
+  // Context the household wrote once and may not have revisited: expired
+  // entries are left out and entries whose dates have all passed are marked
+  // as history, so the writer stops counting down to finished plans.
+  const context = prepareContext(config.context, todayYmd(config.timezone));
+  for (const { key, latest } of context.stale) {
+    console.log(
+      `  Note: context "${key}" only mentions past dates (latest ${latest}) — update it in config.yaml.`,
+    );
+  }
+  if (context.entries.length > 0) {
     prompt += '\n\n## Household context\n\n';
-    prompt += 'Use this information to make smarter observations and connections:\n\n';
-    for (const [key, value] of Object.entries(context)) {
+    prompt +=
+      'Background the household wrote about itself. It may be out of date: use it to interpret ' +
+      "today's data, never to contradict it.\n\n";
+    for (const [key, value] of context.entries) {
       prompt += `- **${key}**: ${value}\n`;
     }
   }
@@ -1110,6 +1121,9 @@ function yesterdayResultsSafe(
   }
 }
 
+/** Heading of the weekly section listing stale config context. */
+const HOUSEKEEPING_HEADING = 'Housekeeping';
+
 /** Options for one brief generation. */
 export interface GenerateOptions {
   /**
@@ -1275,6 +1289,24 @@ export async function generateBrief(
     );
   }
 
+  // Once a week, tell the household which parts of its context have gone stale.
+  if (weekly) {
+    const ctx = prepareContext(config.context, todayStr);
+    const items = [
+      ...ctx.stale.map(({ key, latest }) => ({
+        label: `Update the "${key}" context in config.yaml`,
+        note: `every date it mentions has passed (latest ${latest})`,
+        checkbox: true,
+      })),
+      ...ctx.expired.map((key) => ({
+        label: `Remove the "${key}" context from config.yaml`,
+        note: 'its until date has passed, so it is no longer used',
+        checkbox: true,
+      })),
+    ];
+    if (items.length) brief.sections.push({ heading: HOUSEKEEPING_HEADING, items });
+  }
+
   // Review before printing: repeats out of the Executive Brief, in code; then
   // a fact check whose findings must quote both the brief and the data, and
   // are applied as exact replacements only once both quotes are verified.
@@ -1285,13 +1317,10 @@ export async function generateBrief(
     maxTokens: HOUSEKEEPING_MAX_TOKENS,
     warn: (msg) => runtimeErrors.add('fact_check', msg, 'warning'),
   });
-  const verified = verifyFactIssues(
-    factIssues,
-    brief,
-    dataPayload,
-    protectedPrefixes,
-    COACH_HEADINGS,
-  );
+  const verified = verifyFactIssues(factIssues, brief, dataPayload, protectedPrefixes, [
+    ...COACH_HEADINGS,
+    HOUSEKEEPING_HEADING,
+  ]);
   const { brief: corrected, applied } = applyCorrections(brief, verified);
   if (applied.length) {
     brief = corrected;
