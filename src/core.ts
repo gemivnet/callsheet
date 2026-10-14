@@ -5,6 +5,7 @@ import {
   existsSync,
   readdirSync,
   unlinkSync,
+  copyFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +54,13 @@ import {
   detectResolvableTasks,
   saveAutoCloseLog,
 } from './autoclose.js';
-import { recordRun, isScheduledTrigger, type RunTrigger } from './status.js';
+import {
+  recordRun,
+  isScheduledTrigger,
+  readStatus,
+  updateConnectorStreaks,
+  type RunTrigger,
+} from './status.js';
 
 // Moved to their own modules; re-exported so existing imports keep working.
 export { printPdf } from './print.js';
@@ -1389,6 +1396,36 @@ export function saveBrief(brief: Brief, outputDir: string): string {
   return path;
 }
 
+/** Internal warnings for the status record, or nothing when there were none. */
+function warningsField(errors: RuntimeError[]): { warnings?: string[] } {
+  return errors.length ? { warnings: errors.map((e) => `${e.source}: ${e.error}`) } : {};
+}
+
+/**
+ * Before a non-scheduled run overwrites today's files, keep a copy of the ones
+ * the scheduled run printed (`callsheet_DATE.printed.json`/`.pdf`, and the
+ * data behind them). Re-running in the afternoon used to replace the brief
+ * the household had read that morning, leaving no record of it.
+ */
+export function preservePrintedRun(outputDir: string, date: string, trigger: RunTrigger): void {
+  if (isScheduledTrigger(trigger)) return;
+  const scheduled = readStatus(outputDir).lastScheduled;
+  if (scheduled?.date !== date || !scheduled.generated) return;
+  for (const [from, to] of [
+    [`callsheet_${date}.json`, `callsheet_${date}.printed.json`],
+    [`callsheet_${date}.pdf`, `callsheet_${date}.printed.pdf`],
+    [`connector_data_${date}.json`, `connector_data_${date}.printed.json`],
+  ]) {
+    const src = join(outputDir, from);
+    const dst = join(outputDir, to);
+    try {
+      if (existsSync(src) && !existsSync(dst)) copyFileSync(src, dst);
+    } catch {
+      /* a lost copy is not worth failing the run */
+    }
+  }
+}
+
 /** True for the page `buildErrorBrief` produces when the model could not write a brief. */
 export function isErrorBrief(brief: Brief): boolean {
   return (
@@ -1450,10 +1487,33 @@ export async function runPipeline(
   const runDate = todayYmd();
   const outputDir = config.output_dir ?? 'output';
 
+  // Warnings raised after a previous run finished writing its brief (memory,
+  // review, auto-close) would otherwise surface as this morning's problems.
+  const leftover = runtimeErrors.drain();
+  if (leftover.length) {
+    console.log(`  Dropping ${leftover.length} warning(s) left over from an earlier run.`);
+  }
+
   // Fetch
   console.log('Fetching data...');
   const { results, issues: connectorIssues } = await fetchAll(config);
   const issueLines = connectorIssues.map((i) => `${i.connector}: ${i.error}`);
+
+  if (isScheduledTrigger(trigger)) {
+    const reached = updateConnectorStreaks(
+      outputDir,
+      runDate,
+      connectorIssues.map((i) => i.connector),
+      shiftYmd(runDate, -1),
+    );
+    for (const [name, streak] of Object.entries(reached)) {
+      const why = connectorIssues.find((i) => i.connector === name)?.error ?? '';
+      await notify(
+        config,
+        `WARN Callsheet: ${name} has failed ${streak.days} mornings running (since ${streak.since}): ${why}`,
+      );
+    }
+  }
 
   if (results.length === 0) {
     const message = 'No data fetched. Check your config and connector settings.';
@@ -1476,6 +1536,10 @@ export async function runPipeline(
   }
 
   const dataPayload = buildDataPayload(results);
+
+  // A manual or dashboard re-run must not erase the morning's printed brief
+  // or the data it was written from — the record of what the household saw.
+  preservePrintedRun(outputDir, runDate, trigger);
 
   // Save raw data
   const dataPath = saveDataPayload(dataPayload, outputDir);
@@ -1536,6 +1600,7 @@ export async function runPipeline(
     printJob: print.jobId,
     error: generated ? print.detail : errorBriefSummary(brief),
     connectorIssues: issueLines.length ? issueLines : undefined,
+    ...warningsField(runtimeErrors.drain()),
   });
 
   if (

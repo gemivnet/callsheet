@@ -729,3 +729,24 @@ describe('expectedRunDate', () => {
     expect(scheduler.expectedRunDate({}, new Date(2026, 9, 14, 9, 0))).toBeNull();
   });
 });
+
+describe('runExclusive', () => {
+  it('runs under the generation lock and refuses while a run is in progress', async () => {
+    let release!: () => void;
+    const slow = scheduler.runExclusive(
+      () => new Promise<string>((r) => (release = () => r('done'))),
+    );
+    expect(scheduler.isGenerating()).toBe(true);
+    expect(await scheduler.runExclusive(() => Promise.resolve('second'))).toBeNull();
+    release();
+    expect(await slow).toBe('done');
+    expect(scheduler.isGenerating()).toBe(false);
+  });
+
+  it('releases the lock when the work throws', async () => {
+    await expect(scheduler.runExclusive(() => Promise.reject(new Error('boom')))).rejects.toThrow(
+      'boom',
+    );
+    expect(scheduler.isGenerating()).toBe(false);
+  });
+});

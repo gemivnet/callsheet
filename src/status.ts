@@ -42,6 +42,15 @@ export interface RunRecord {
   error?: string;
   /** Connectors that failed during the fetch, as "name: error". */
   connectorIssues?: string[];
+  /** Internal warnings raised during the run (memory, review, auto-close, task coach). */
+  warnings?: string[];
+}
+
+/** A connector that has failed on consecutive scheduled runs. */
+export interface ConnectorStreak {
+  since: string;
+  last: string;
+  days: number;
 }
 
 export interface StatusFile {
@@ -49,6 +58,8 @@ export interface StatusFile {
   last?: RunRecord;
   /** The most recent run started by the scheduler (on time or as a catch-up). */
   lastScheduled?: RunRecord;
+  /** Connectors failing on consecutive scheduled mornings. */
+  connectorStreaks?: Record<string, ConnectorStreak>;
 }
 
 const STATUS_FILE = 'status.json';
@@ -79,17 +90,65 @@ export function readStatus(outputDir: string): StatusFile {
  */
 export function recordRun(outputDir: string, run: RunRecord): void {
   try {
-    mkdirSync(outputDir, { recursive: true });
     const status = readStatus(outputDir);
     status.last = run;
     if (isScheduledTrigger(run.trigger)) status.lastScheduled = run;
-    const path = join(outputDir, STATUS_FILE);
-    const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(status, null, 2));
-    renameSync(tmp, path);
+    writeStatus(outputDir, status);
   } catch (e) {
     console.error(`  Warning: could not record run status: ${e instanceof Error ? e.message : e}`);
   }
+}
+
+function writeStatus(outputDir: string, status: StatusFile): void {
+  mkdirSync(outputDir, { recursive: true });
+  const path = join(outputDir, STATUS_FILE);
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify(status, null, 2));
+  renameSync(tmp, path);
+}
+
+/** Consecutive scheduled mornings after which a failing connector is worth a message. */
+export const STREAK_ALERT_DAYS = 2;
+
+/**
+ * Track connectors that keep failing. A connector that failed on the previous
+ * scheduled day and fails again extends its streak; one that recovers drops
+ * out. Returns the streaks that reached STREAK_ALERT_DAYS today, so each
+ * outage is announced once. The budget connector once failed for nine days,
+ * reported only as a line in the brief.
+ */
+export function updateConnectorStreaks(
+  outputDir: string,
+  date: string,
+  failing: string[],
+  previousDate: string,
+): Record<string, ConnectorStreak> {
+  const reached: Record<string, ConnectorStreak> = {};
+  try {
+    const status = readStatus(outputDir);
+    const old = status.connectorStreaks ?? {};
+    const next: Record<string, ConnectorStreak> = {};
+    for (const name of new Set(failing)) {
+      const prev = old[name];
+      let streak: ConnectorStreak = { since: date, last: date, days: 1 };
+      if (prev?.last === date) {
+        streak = prev;
+      } else if (prev?.last === previousDate) {
+        streak = { ...prev, last: date, days: prev.days + 1 };
+      }
+      next[name] = streak;
+      if (streak.days === STREAK_ALERT_DAYS && prev?.days !== STREAK_ALERT_DAYS) {
+        reached[name] = streak;
+      }
+    }
+    status.connectorStreaks = next;
+    writeStatus(outputDir, status);
+  } catch (e) {
+    console.error(
+      `  Warning: could not track connector failures: ${e instanceof Error ? e.message : e}`,
+    );
+  }
+  return reached;
 }
 
 /** True when the scheduler already produced today's brief, successfully or not. */

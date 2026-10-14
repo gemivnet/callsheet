@@ -10,6 +10,7 @@ const mockExistsSync = jest.fn<(...args: unknown[]) => boolean>();
 const mockReaddirSync = jest.fn<(...args: unknown[]) => string[]>();
 const mockUnlinkSync = jest.fn();
 const mockRenameSync = jest.fn();
+const mockCopyFileSync = jest.fn();
 const mockExecFileSync = jest.fn();
 
 const fsMock = {
@@ -20,6 +21,7 @@ const fsMock = {
   readdirSync: mockReaddirSync,
   unlinkSync: mockUnlinkSync,
   renameSync: mockRenameSync,
+  copyFileSync: mockCopyFileSync,
 };
 
 jest.unstable_mockModule('node:fs', () => ({
@@ -1218,6 +1220,46 @@ describe('model defaults', () => {
   });
 });
 
+describe('preservePrintedRun', () => {
+  const today = '2026-10-14';
+  const status = (lastScheduled: unknown) => {
+    mockExistsSync.mockImplementation((p: unknown) => {
+      const path = String(p);
+      if (path.endsWith('status.json')) return true;
+      if (path.includes('.printed.')) return path.endsWith('.printed.pdf');
+      return true;
+    });
+    mockReadFileSync.mockImplementation((p: unknown) =>
+      String(p).endsWith('status.json') ? JSON.stringify({ lastScheduled }) : '{}',
+    );
+  };
+
+  it("keeps a copy of the morning's printed files before a manual re-run overwrites them", () => {
+    status({ date: today, generated: true });
+    core.preservePrintedRun('/out', today, 'manual');
+    expect(mockCopyFileSync.mock.calls.map((c) => String(c[1]))).toEqual([
+      '/out/callsheet_2026-10-14.printed.json',
+      '/out/connector_data_2026-10-14.printed.json',
+    ]);
+  });
+
+  it('does nothing for scheduled runs, other days, error pages, or a failed copy', () => {
+    status({ date: today, generated: true });
+    core.preservePrintedRun('/out', today, 'catch-up');
+    status({ date: '2026-10-13', generated: true });
+    core.preservePrintedRun('/out', today, 'dashboard');
+    status({ date: today, generated: false });
+    core.preservePrintedRun('/out', today, 'manual');
+    expect(mockCopyFileSync).not.toHaveBeenCalled();
+
+    status({ date: today, generated: true });
+    mockCopyFileSync.mockImplementationOnce(() => {
+      throw new Error('EACCES');
+    });
+    expect(() => core.preservePrintedRun('/out', today, 'manual')).not.toThrow();
+  });
+});
+
 describe('isErrorBrief', () => {
   it('recognises the generation-failed page', () => {
     expect(
@@ -2031,9 +2073,11 @@ describe('runPipeline', () => {
 
     /** The JSON written to the status file's temporary path. */
     function writtenStatus(): { last: { print: string; trigger: string; generated: boolean } } {
-      const call = mockWriteFileSync.mock.calls.find((c) =>
-        String(c[0]).endsWith('status.json.tmp'),
-      );
+      // The last write: scheduled runs also write the file earlier to track
+      // connector failure streaks.
+      const call = mockWriteFileSync.mock.calls
+        .filter((c) => String(c[0]).endsWith('status.json.tmp'))
+        .at(-1);
       expect(call).toBeDefined();
       return JSON.parse(String(call![1])) as never;
     }
@@ -2136,6 +2180,62 @@ describe('runPipeline', () => {
       await expect(core.runPipeline(webhookConfig)).rejects.toThrow('No data fetched');
 
       expect(webhookMessages()).toEqual([]);
+    });
+
+    it("drops warnings left over from an earlier run and records this run's own", async () => {
+      setupPipelineMocks();
+      core.runtimeErrors.add('stale_source', 'from yesterday', 'warning');
+
+      await core.runPipeline(webhookConfig, { trigger: 'scheduled', print: { sleep: noSleep } });
+
+      expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+        '  Dropping 1 warning(s) left over from an earlier run.',
+      );
+      const status = writtenStatus() as unknown as { last: { warnings?: string[] } };
+      expect(status.last.warnings ?? []).not.toContain('stale_source: from yesterday');
+    });
+
+    it('announces a connector that has failed two scheduled mornings running', async () => {
+      setupPipelineMocks();
+      mockLoadConnectors.mockReturnValue({
+        connectors: [
+          {
+            name: 'weather',
+            description: 'Weather',
+            fetch: jest
+              .fn<() => Promise<ConnectorResult>>()
+              .mockRejectedValue(new Error('HTTP 503')),
+          },
+          {
+            name: 'calendar',
+            description: 'Calendar',
+            fetch: jest.fn<() => Promise<ConnectorResult>>().mockResolvedValue({
+              source: 'calendar',
+              description: 'c',
+              data: {},
+              priorityHint: 'low',
+            }),
+          },
+        ],
+        initErrors: [],
+      });
+      const yesterday = shiftYmd(todayYmd(), -1);
+      mockExistsSync.mockImplementation((p: unknown) => String(p).endsWith('status.json'));
+      mockReadFileSync.mockImplementation((p: unknown) => {
+        const path = String(p);
+        if (path.includes('system.md')) return 'System prompt.';
+        if (path.endsWith('status.json'))
+          return JSON.stringify({
+            connectorStreaks: { weather: { since: yesterday, last: yesterday, days: 1 } },
+          });
+        return '{}';
+      });
+
+      await core.runPipeline(webhookConfig, { trigger: 'scheduled', print: { sleep: noSleep } });
+
+      expect(webhookMessages()).toContain(
+        `WARN Callsheet: weather has failed 2 mornings running (since ${yesterday}): HTTP 503`,
+      );
     });
 
     it('records an error page as a failed generation, with its explanation', async () => {

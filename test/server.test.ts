@@ -17,17 +17,16 @@ const mockRunPipeline = jest.fn();
 const mockGetRegistry = jest.fn().mockReturnValue(new Map());
 const mockIsGenerating = jest.fn().mockReturnValue(false);
 const mockExpectedRunDate = jest.fn<() => string | null>().mockReturnValue(null);
+const mockRunExclusive = jest.fn(async (fn: () => Promise<unknown>) => fn());
 const mockGetMonthlyUsageData = jest.fn().mockReturnValue({ month: '2026-03', entries: [] });
-const mockGetUsageSummary = jest
-  .fn()
-  .mockReturnValue({
-    total_cost: 0,
-    total_input_tokens: 0,
-    total_output_tokens: 0,
-    brief_count: 0,
-    api_calls: 0,
-    by_model: {},
-  });
+const mockGetUsageSummary = jest.fn().mockReturnValue({
+  total_cost: 0,
+  total_input_tokens: 0,
+  total_output_tokens: 0,
+  brief_count: 0,
+  api_calls: 0,
+  by_model: {},
+});
 const mockBuildAuthUrl = jest.fn();
 const mockExchangeCodeAndSave = jest.fn();
 const mockResolveCredsFile = jest.fn().mockReturnValue(undefined);
@@ -86,6 +85,7 @@ jest.unstable_mockModule('../src/usage.js', () => ({
 jest.unstable_mockModule('../src/scheduler.js', () => ({
   isGenerating: mockIsGenerating,
   expectedRunDate: mockExpectedRunDate,
+  runExclusive: mockRunExclusive,
 }));
 
 // ── Import after mocks ──────────────────────────────────────────────────────
@@ -302,7 +302,11 @@ describe('GET /api/briefs', () => {
   });
 
   it('returns brief list from JSON files', async () => {
-    mockReaddirSync.mockReturnValue(['callsheet_2026-03-27.json', 'other.txt']);
+    mockReaddirSync.mockReturnValue([
+      'callsheet_2026-03-27.json',
+      'callsheet_2026-03-27.printed.json',
+      'other.txt',
+    ]);
     mockReadFileSync.mockReturnValue(JSON.stringify({ title: 'Test Brief', sections: [1, 2] }));
     const res = await request(server, 'GET', '/api/briefs');
     const data = json(res) as { briefs: Array<{ date: string; title: string; sections: number }> };
@@ -348,9 +352,11 @@ describe('GET /api/briefs/:date/pdf', () => {
 
 describe('POST /api/briefs/generate', () => {
   it('returns 409 if generation is in progress', async () => {
-    mockIsGenerating.mockReturnValue(true);
+    mockLoadConfig.mockReturnValue({});
+    mockRunExclusive.mockResolvedValueOnce(null);
     const res = await request(server, 'POST', '/api/briefs/generate');
     expect(res.status).toBe(409);
+    expect(mockRunPipeline).not.toHaveBeenCalled();
   });
 
   it('generates a brief and returns result', async () => {

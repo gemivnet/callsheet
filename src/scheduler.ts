@@ -246,3 +246,19 @@ export function schedulerConfigPath(): string {
 export function isGenerating(): boolean {
   return running;
 }
+
+/**
+ * Run `fn` under the same lock as scheduled generations, or return null when
+ * one is already running. The dashboard's generate button used to check the
+ * flag without taking it, so a click during the morning run started a second
+ * run that wrote the same files.
+ */
+export async function runExclusive<T>(fn: () => Promise<T>): Promise<T | null> {
+  if (running) return null;
+  running = true;
+  try {
+    return await fn();
+  } finally {
+    running = false;
+  }
+}
