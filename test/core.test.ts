@@ -2650,6 +2650,52 @@ describe('runPipeline', () => {
     });
   });
 
+  it('marks stale context as history and lists it for housekeeping on the review day', async () => {
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    mockMessagesCreate
+      .mockResolvedValueOnce(
+        mockApiResponse(
+          JSON.stringify({ title: 'T', sections: [{ heading: 'Executive Brief', items: [] }] }),
+        ),
+      )
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('{"issues":[]}'));
+    mockReadFileSync.mockImplementation((p: unknown) =>
+      String(p).includes('system.md') ? 'System prompt.' : '{}',
+    );
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(
+      {
+        model: 'claude-sonnet-4-20250514',
+        output_dir: '/tmp/output',
+        weekly_review_day: days[new Date().getDay()],
+        context: {
+          travel: 'Trip May 7-25, 2020.',
+          old: { text: 'Something', until: '2020-01-01' },
+          people: 'Two adults',
+        },
+      },
+      '[]',
+    );
+
+    const system = (mockMessagesCreate.mock.calls[0][0] as { system: string }).system;
+    expect(system).toContain('- **travel**: Trip May 7-25, 2020. [Every date in this note');
+    expect(system).toContain('- **people**: Two adults');
+    expect(system).not.toContain('Something');
+    const housekeeping = brief.sections.find((s) => s.heading === 'Housekeeping');
+    expect(housekeeping?.items?.map((i) => i.label)).toEqual([
+      'Update the "travel" context in config.yaml',
+      'Remove the "old" context from config.yaml',
+    ]);
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+      '  Note: context "travel" only mentions past dates (latest 2020-05-25) — update it in config.yaml.',
+    );
+    logSpy.mockRestore();
+  });
+
   it('should include runtime errors in error brief', async () => {
     // Add a runtime error before generating
     core.runtimeErrors.add('test_pipeline', 'something broke', 'error');
