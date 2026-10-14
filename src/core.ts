@@ -363,65 +363,101 @@ export function buildDataPayload(results: ConnectorResult[]): string {
 // ---------------------------------------------------------------------------
 
 const MEMORY_DIR = 'memory';
-const MAX_MEMORY_DAYS = 7;
+
+/** Memory older than this many days never reaches the writer, whatever it says. */
+const MEMORY_WINDOW_DAYS = 7;
+
+/** Memory files are kept this long for reading later, then deleted. */
+const MEMORY_RETENTION_DAYS = 60;
+
+/** How long a remembered fact stays relevant when the model gives no date. */
+const DEFAULT_MEMORY_TTL_DAYS = 3;
+
+/**
+ * Sources memory is never extracted from. The language connector's data
+ * describes a theme, not a phrase, and the extractor invented a phrase from it
+ * every day — in October every memory file held one that was never printed.
+ * Market, weather and the like are recomputed fresh each morning.
+ */
+const MEMORY_EXCLUDED_SOURCES = new Set([
+  'language',
+  'market',
+  'weather',
+  'aviation_weather',
+  'garbage_recycling',
+  'sun_moon',
+]);
+
+/** One remembered fact and the last day it matters. */
+export interface MemoryInsight {
+  fact: string;
+  /** YYYY-MM-DD; the fact is dropped after this day. */
+  until: string;
+}
 
 interface DailyMemory {
   date: string;
-  insights: string[];
+  /** Plain strings are from before facts carried an expiry. */
+  insights: (string | MemoryInsight)[];
 }
 
 function getMemoryDir(outputDir: string): string {
   return join(outputDir, MEMORY_DIR);
 }
 
-function loadRecentMemories(outputDir: string): DailyMemory[] {
+/**
+ * Memories from the last MEMORY_WINDOW_DAYS calendar days, newest last, with
+ * expired facts removed.
+ *
+ * This used to load the seven newest files, however old: after a vacation or
+ * a run of failed saves, notes from 57 days earlier were presented as recent.
+ * Today's own file is skipped so a re-run does not read back its own notes.
+ */
+export function loadRecentMemories(outputDir: string, today: string = todayYmd()): DailyMemory[] {
   const memDir = getMemoryDir(outputDir);
   if (!existsSync(memDir)) return [];
+  const oldest = shiftYmd(today, -MEMORY_WINDOW_DAYS);
 
-  const files = readdirSync(memDir)
-    .filter((f) => f.startsWith('memory_') && f.endsWith('.json'))
-    .sort()
-    .slice(-MAX_MEMORY_DAYS);
-
-  return files.map((f) => {
-    try {
-      return JSON.parse(readFileSync(join(memDir, f), 'utf-8')) as DailyMemory;
-    } catch {
-      return { date: f, insights: [] };
-    }
-  });
+  return readdirSync(memDir)
+    .map((f) => /^memory_(\d{4}-\d{2}-\d{2})\.json$/.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null && m[1] >= oldest && m[1] < today)
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map((m) => {
+      try {
+        const mem = JSON.parse(readFileSync(join(memDir, m[0]), 'utf-8')) as DailyMemory;
+        const live = (mem.insights ?? []).filter(
+          (i) => typeof i === 'string' || (typeof i?.fact === 'string' && i.until >= today),
+        );
+        return { date: m[1], insights: live };
+      } catch {
+        return { date: m[1], insights: [] };
+      }
+    })
+    .filter((mem) => mem.insights.length > 0);
 }
 
 function buildMemoryContext(memories: DailyMemory[]): string {
   if (!memories.length) return '';
 
   let ctx = '\n\n## Memory from previous briefs\n\n';
-  ctx += 'You have access to notes from your previous briefs. Use these to:\n';
-  ctx += '- Track ongoing situations (packages in transit, bills coming due, project progress)\n';
-  ctx += '- Avoid repeating the same insight if nothing has changed\n';
-  ctx += '- Notice trends or follow up on previous observations\n\n';
-  ctx += "**CRITICAL — Memory is not truth. Today's live data always wins:**\n";
+  ctx += 'Notes kept from the last few mornings about things still in motion — deliveries, ';
+  ctx += 'deadlines, appointments mentioned only in email, replies being waited on. Use them to ';
+  ctx += 'follow an item after its email has aged out of the data, and to avoid repeating ';
+  ctx += 'yesterday without news.\n\n';
+  ctx += "**Memory is not evidence.** Today's live data always wins:\n";
+  ctx += '- A remembered task that is no longer in Todoist was finished — do not surface it.\n';
   ctx +=
-    "- Memory is a hint, not a source of truth. EVERY claim from memory must be verified against today's live data.\n";
+    '- Anything in `recently_completed`, or settled by a newer email or transaction, is done.\n';
   ctx +=
-    "- If a memorized issue has NO corresponding email, task, or transaction in today's data, treat it as RESOLVED or outdated — do NOT surface it.\n";
-  ctx +=
-    "- If a memorized task no longer appears in today's Todoist data, it was completed — do NOT surface it.\n";
-  ctx +=
-    '- If a memorized issue has a NEWER email showing resolution (approval, confirmation, payment received), treat it as RESOLVED.\n';
-  ctx += "- Check the 'recently_completed' list in Todoist data — anything there is DONE.\n";
-  ctx +=
-    '- Check trashed/archived emails — if someone trashed a notification, they already handled it.\n';
-  ctx += "- Do NOT let memory override clear resolution signals in today's data.\n";
-  ctx +=
-    "- The ABSENCE of data about a memorized item IS a resolution signal. If memory says a request to some vendor was rejected but there are zero emails from that vendor in today's data, do NOT re-surface it.\n";
-  ctx +=
-    "- If a memory item has been repeated 3+ days with no change, it's stale — drop it entirely.\n\n";
+    "- Never copy a number, count, identifier or date from memory into the brief unless today's data confirms it.\n\n";
 
   for (const mem of memories) {
     ctx += `### ${mem.date}\n`;
     for (const insight of mem.insights) {
-      ctx += `- ${insight}\n`;
+      ctx +=
+        typeof insight === 'string'
+          ? `- ${insight}\n`
+          : `- ${insight.fact} (relevant until ${insight.until})\n`;
     }
     ctx += '\n';
   }
@@ -429,43 +465,98 @@ function buildMemoryContext(memories: DailyMemory[]): string {
   return ctx;
 }
 
+/** The payload with the sources memory must not draw on removed. */
+function memoryPayload(dataPayload: string): string {
+  try {
+    const parsed: unknown = JSON.parse(dataPayload);
+    if (!Array.isArray(parsed)) return dataPayload;
+    return JSON.stringify(
+      (parsed as { source?: string }[]).filter(
+        (s) => !MEMORY_EXCLUDED_SOURCES.has(s?.source ?? ''),
+      ),
+    );
+  } catch {
+    return dataPayload;
+  }
+}
+
+const MEMORY_SCHEMA = {
+  type: 'object',
+  properties: {
+    insights: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          fact: { type: 'string' },
+          until: { type: 'string', format: 'date' },
+        },
+        required: ['fact', 'until'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['insights'],
+  additionalProperties: false,
+} as const;
+
+/** Keep well-formed facts, give a missing or past expiry a short default, cap the count. */
+export function normaliseInsights(raw: unknown, today: string = todayYmd()): MemoryInsight[] {
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (Array.isArray((raw as { insights?: unknown } | null)?.insights)) {
+    list = (raw as { insights: unknown[] }).insights;
+  }
+  const fallback = shiftYmd(today, DEFAULT_MEMORY_TTL_DAYS);
+  const out: MemoryInsight[] = [];
+  for (const item of list) {
+    const fact = typeof item === 'string' ? item : (item as { fact?: unknown })?.fact;
+    if (typeof fact !== 'string' || !fact.trim()) continue;
+    const until = (item as { until?: unknown })?.until;
+    const valid = typeof until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(until) && until >= today;
+    out.push({ fact: fact.trim().slice(0, 300), until: valid ? until : fallback });
+  }
+  return out.slice(0, 8);
+}
+
 async function generateMemoryInsights(
   client: Anthropic,
   model: string,
   dataPayload: string,
   outputDir: string,
-): Promise<string[]> {
+): Promise<MemoryInsight[]> {
   try {
+    const today = todayYmd();
     const response = await client.messages.create({
       model,
       // 512 truncated the JSON array mid-string on most runs, so the parse
       // failed and a day's memory was silently lost.
       max_tokens: HOUSEKEEPING_MAX_TOKENS,
-      output_config: { effort: 'low' },
+      output_config: {
+        effort: 'low',
+        format: {
+          type: 'json_schema',
+          schema: MEMORY_SCHEMA as unknown as Record<string, unknown>,
+        },
+      },
       system:
-        "You extract key facts worth remembering for tomorrow's brief. " +
-        'Return a JSON array of 3-8 short strings. Focus on: ' +
-        'ongoing situations (deliveries, upcoming deadlines, bills due soon), ' +
-        'notable patterns (spending spikes, inbox growth), ' +
-        'things to follow up on tomorrow. ' +
-        'Do NOT record counts, totals or per-person tallies — they are only true on the day ' +
-        "they were computed and tomorrow's brief recomputes them from live data. Record the " +
-        'underlying fact without the number. ' +
-        'CRITICAL: You are given ONLY the raw connector data (emails, tasks, calendar, etc.). ' +
-        'Every insight you return MUST be directly traceable to a specific item in this data — ' +
-        'a specific email, task, calendar event, or transaction. ' +
-        'If you cannot point to the exact data source for a claim, do NOT include it. ' +
-        'Do NOT infer or assume ongoing situations that are not evidenced in the data. ' +
-        'Do NOT carry forward items from the brief that lack backing data — the brief may ' +
-        'contain stale items from previous memory that are no longer relevant. ' +
-        'Skip routine/static info. Be concise. Return ONLY the JSON array.',
+        `Today is ${today}. You keep a short list of open loops for tomorrow's household brief: ` +
+        "things still in motion that tomorrow's data may no longer show, because emails age out " +
+        'of the window after two days. Good examples: a delivery in transit and its expected date; ' +
+        'a bill, form or RSVP with its due date; an appointment or deadline mentioned only in an ' +
+        'email; a reply the household is waiting on. Return 0-8 facts. Each must be traceable to ' +
+        'a specific email, task, event or transaction in the data, state its date when one is ' +
+        'given, and carry `until` — the last day it matters (the due date, the delivery date, the ' +
+        'appointment). Skip anything already on the calendar or in Todoist, anything routine, and ' +
+        'any count or total. Never invent a fact the data does not state.',
       messages: [
         {
           role: 'user',
           content:
             "Here is today's raw connector data. Extract only facts that are " +
             'directly evidenced in this data:\n\n' +
-            dataPayload,
+            memoryPayload(dataPayload),
         },
       ],
     });
@@ -473,7 +564,7 @@ async function generateMemoryInsights(
     logUsage(outputDir, model, 'memory', response.usage.input_tokens, response.usage.output_tokens);
 
     const text = stripJsonCodeFences(extractResponseText(response));
-    return JSON.parse(text) as string[];
+    return normaliseInsights(JSON.parse(text), today);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`  Warning: Memory generation failed: ${msg}`);
@@ -500,15 +591,16 @@ export async function saveMemory(
     console.log(`  Saved ${insights.length} memory insights for tomorrow.`);
   }
 
-  // Prune old memories
+  // Prune by age, not by count: old files are harmless now that loading is
+  // date-bounded, and a few weeks of them make it possible to audit what the
+  // brief was told.
   if (existsSync(memDir)) {
-    const files = readdirSync(memDir)
-      .filter((f) => f.startsWith('memory_') && f.endsWith('.json'))
-      .sort();
-    while (files.length > MAX_MEMORY_DAYS) {
-      const old = files.shift()!;
+    const cutoff = shiftYmd(today, -MEMORY_RETENTION_DAYS);
+    for (const f of readdirSync(memDir)) {
+      const m = /^memory_(\d{4}-\d{2}-\d{2})\.json$/.exec(f);
+      if (!m || m[1] >= cutoff) continue;
       try {
-        unlinkSync(join(memDir, old));
+        unlinkSync(join(memDir, f));
       } catch {
         /* ignore */
       }

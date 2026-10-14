@@ -77,6 +77,7 @@ jest.unstable_mockModule('../src/usage.js', () => ({
 
 // Import after mocks
 const core = await import('../src/core.js');
+const { todayYmd, shiftYmd } = await import('../src/dates.js');
 
 /**
  * The brief's title is computed from the date, not taken from the model, so
@@ -909,7 +910,38 @@ describe('saveMemory', () => {
     const writtenContent = mockWriteFileSync.mock.calls[0][1] as string;
     const parsed = JSON.parse(writtenContent);
     expect(parsed.insights).toHaveLength(2);
-    expect(parsed.insights[0]).toBe('Package arriving tomorrow');
+    // A bare string gets the default expiry.
+    expect(parsed.insights[0]).toEqual({
+      fact: 'Package arriving tomorrow',
+      until: shiftYmd(todayYmd(), 3),
+    });
+  });
+
+  it('stores dated facts from the structured reply and asks without the excluded sources', async () => {
+    const until = shiftYmd(todayYmd(), 5);
+    mockMessagesCreate.mockResolvedValue(
+      mockApiResponse(JSON.stringify({ insights: [{ fact: 'Form due Friday', until }] })),
+    );
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue([]);
+    const payload = JSON.stringify([
+      { source: 'gmail', data: { subject: 'Please return the form by Friday' } },
+      { source: 'language', data: { today_theme: 'shopping' } },
+      { source: 'market', data: { symbol: 'XYZ' } },
+    ]);
+
+    await core.saveMemory(mockClient, 'claude-haiku-5-5', payload, '/tmp/output');
+
+    const params = mockMessagesCreate.mock.calls[0][0] as {
+      messages: { content: string }[];
+      output_config: { format: { type: string } };
+    };
+    expect(params.messages[0].content).toContain('return the form');
+    expect(params.messages[0].content).not.toContain('today_theme');
+    expect(params.messages[0].content).not.toContain('XYZ');
+    expect(params.output_config.format.type).toBe('json_schema');
+    const parsed = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+    expect(parsed.insights).toEqual([{ fact: 'Form due Friday', until }]);
   });
 
   it('should not save when no insights are generated', async () => {
@@ -923,24 +955,20 @@ describe('saveMemory', () => {
     expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it('should prune old memory files beyond 7 days', async () => {
+  it('prunes memory files by age, keeping recent ones for later reading', async () => {
     mockMessagesCreate.mockResolvedValue(mockApiResponse('["insight"]'));
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue([
-      'memory_2026-03-18.json',
-      'memory_2026-03-19.json',
-      'memory_2026-03-20.json',
-      'memory_2026-03-21.json',
-      'memory_2026-03-22.json',
-      'memory_2026-03-23.json',
-      'memory_2026-03-24.json',
-      'memory_2026-03-25.json',
-    ]);
+    const old = `memory_${shiftYmd(todayYmd(), -61)}.json`;
+    const recent = `memory_${shiftYmd(todayYmd(), -20)}.json`;
+    mockReaddirSync.mockReturnValue([old, recent, 'notes.txt']);
+    mockUnlinkSync.mockImplementationOnce(() => {
+      throw new Error('busy');
+    });
 
     await core.saveMemory(mockClient, 'claude-haiku-4-5-20251001', '{}', '/tmp/output');
 
-    // Should delete the oldest file to keep at most 7
-    expect(mockUnlinkSync).toHaveBeenCalled();
+    expect(mockUnlinkSync).toHaveBeenCalledTimes(1);
+    expect(String(mockUnlinkSync.mock.calls[0][0])).toContain(old);
   });
 
   it('should handle API errors gracefully', async () => {
@@ -965,7 +993,93 @@ describe('saveMemory', () => {
 
     expect(mockWriteFileSync).toHaveBeenCalled();
     const parsed = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
-    expect(parsed.insights).toEqual(['fenced insight']);
+    expect(parsed.insights.map((i: { fact: string }) => i.fact)).toEqual(['fenced insight']);
+  });
+});
+
+describe('normaliseInsights', () => {
+  const today = '2026-10-14';
+
+  it('reads the structured shape and the legacy array', () => {
+    expect(
+      core.normaliseInsights({ insights: [{ fact: 'a', until: '2026-10-20' }] }, today),
+    ).toEqual([{ fact: 'a', until: '2026-10-20' }]);
+    expect(core.normaliseInsights(['b'], today)).toEqual([{ fact: 'b', until: '2026-10-17' }]);
+  });
+
+  it('replaces a past or malformed expiry with the default, and drops junk', () => {
+    expect(
+      core.normaliseInsights(
+        [
+          { fact: 'past', until: '2026-10-01' },
+          { fact: 'bad', until: 'Friday' },
+          { fact: '  ' },
+          { until: '2026-10-20' },
+          7,
+          null,
+        ],
+        today,
+      ),
+    ).toEqual([
+      { fact: 'past', until: '2026-10-17' },
+      { fact: 'bad', until: '2026-10-17' },
+    ]);
+  });
+
+  it('caps the list at eight and handles nonsense', () => {
+    expect(
+      core.normaliseInsights(
+        Array.from({ length: 12 }, (_, i) => `f${i}`),
+        today,
+      ),
+    ).toHaveLength(8);
+    expect(core.normaliseInsights('nope', today)).toEqual([]);
+    expect(core.normaliseInsights(null, today)).toEqual([]);
+  });
+});
+
+describe('loadRecentMemories', () => {
+  const today = '2026-10-14';
+
+  it('loads only the last seven days, skips today, and drops expired facts', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue([
+      'memory_2026-09-01.json',
+      'memory_2026-10-13.json',
+      'memory_2026-10-10.json',
+      'memory_2026-10-14.json',
+      'memory_2026-10-09.json',
+      'other.json',
+    ]);
+    mockReadFileSync.mockImplementation((p: unknown) => {
+      const path = String(p);
+      if (path.endsWith('10-13.json'))
+        return JSON.stringify({
+          insights: [
+            { fact: 'still live', until: '2026-10-15' },
+            { fact: 'expired', until: '2026-10-13' },
+            'legacy string',
+          ],
+        });
+      if (path.endsWith('10-10.json')) return '{corrupt';
+      if (path.endsWith('10-09.json'))
+        return JSON.stringify({ insights: [{ fact: 'gone', until: '2026-10-09' }] });
+      return JSON.stringify({ insights: ['should not load'] });
+    });
+
+    const mems = core.loadRecentMemories('/tmp/output', today);
+
+    expect(mems).toEqual([
+      {
+        date: '2026-10-13',
+        insights: [{ fact: 'still live', until: '2026-10-15' }, 'legacy string'],
+      },
+    ]);
+  });
+
+  it('is empty without a memory directory', () => {
+    mockExistsSync.mockReturnValue(false);
+    expect(core.loadRecentMemories('/tmp/output', today)).toEqual([]);
   });
 });
 
@@ -1459,13 +1573,17 @@ describe('generateBrief', () => {
       .mockResolvedValueOnce(mockApiResponse('["new insight"]')) // memory
       .mockResolvedValueOnce(mockApiResponse('[]')); // critique
 
+    const yesterday = shiftYmd(todayYmd(), -1);
     mockReadFileSync.mockImplementation((path: unknown) => {
       const p = path as string;
       if (p.includes('system.md')) return 'You are a morning brief generator.';
-      if (p.includes('memory_2026-03-27.json'))
+      if (p.includes(`memory_${yesterday}.json`))
         return JSON.stringify({
-          date: '2026-03-27',
-          insights: ['Package arriving tomorrow', 'Bill due Friday'],
+          date: yesterday,
+          insights: [
+            { fact: 'Package arriving tomorrow', until: shiftYmd(todayYmd(), 1) },
+            'Bill due Friday',
+          ],
         });
       return '{}';
     });
@@ -1483,7 +1601,7 @@ describe('generateBrief', () => {
 
     mockReaddirSync.mockImplementation((path: unknown) => {
       const p = path as string;
-      if (p.includes('/memory')) return ['memory_2026-03-27.json'];
+      if (p.includes('/memory')) return [`memory_${yesterday}.json`];
       return [];
     });
 
@@ -1494,7 +1612,8 @@ describe('generateBrief', () => {
     const firstCall = mockMessagesCreate.mock.calls[0] as unknown[];
     const opts = firstCall[0] as { system: string };
     expect(opts.system).toContain('Memory from previous briefs');
-    expect(opts.system).toContain('Package arriving tomorrow');
+    expect(opts.system).toContain('Package arriving tomorrow (relevant until');
+    expect(opts.system).toContain('- Bill due Friday');
   });
 
   it('should include feedback context when feedback.md and critiques exist', async () => {
