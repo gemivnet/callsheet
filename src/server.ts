@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import type { Server } from 'node:http';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import crypto from 'node:crypto';
 import { loadConfig, runPipeline, DEFAULT_MODEL } from './core.js';
 import { getRegistry } from './connectors/index.js';

@@ -1,4 +1,4 @@
-import SunCalc from 'suncalc';
+import * as SunCalc from 'suncalc';
 import type { Connector, ConnectorConfig, ConnectorResult, Check } from '../types.js';
 import { PASS, FAIL, INFO } from '../test-icons.js';
 

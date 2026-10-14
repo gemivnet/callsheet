@@ -10,7 +10,7 @@ import {
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import type { CallsheetConfig, ConnectorResult, Brief, HouseholdMember } from './types.js';
 import { loadConnectors } from './connectors/index.js';
 import { recordBriefPhrase, languageLabelPrefix } from './connectors/language.js';

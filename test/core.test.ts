@@ -39,9 +39,8 @@ jest.unstable_mockModule('node:child_process', () => ({
 }));
 
 jest.unstable_mockModule('js-yaml', () => ({
-  default: {
-    load: (content: string) => JSON.parse(content),
-  },
+  load: (content: string) => JSON.parse(content),
+  dump: (value: unknown) => JSON.stringify(value),
 }));
 
 const mockLoadConnectors = jest
