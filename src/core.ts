@@ -1151,9 +1151,10 @@ const HOUSEKEEPING_HEADING = 'Housekeeping';
 /** Options for one brief generation. */
 export interface GenerateOptions {
   /**
-   * Carry out the task coach's plan in Todoist and record it. True for real
-   * runs; false for previews, so a dashboard "generate" never adds tasks or
-   * overwrites the morning's focus record.
+   * Act on the brief: carry out the task coach's plan, auto-close tasks, and
+   * record the focus, learned context and language phrase. True for real
+   * runs; false for previews, so a dashboard "generate" never writes to
+   * Todoist or overwrites the record of what the morning's brief said.
    */
   applyActions?: boolean;
 }
@@ -1416,10 +1417,13 @@ export async function generateBrief(
   // tomorrow's brief can avoid repeating it. Lives separately from the
   // shared memory bucket because it needs a longer retention window.
   // Runs AFTER the review so the recorded phrase is the one that was printed.
-  recordBriefPhrase(brief, config);
+  // Never on a preview: its phrase is not printed, and recording it would
+  // replace the morning's, letting the one the household saw come back.
+  if (options.applyActions) recordBriefPhrase(brief, config);
 
-  // Auto-close: optionally close Todoist tasks proven resolved by other data sources
-  if (config.auto_close_tasks) {
+  // Auto-close: optionally close Todoist tasks proven resolved by other data
+  // sources. Closing a task is a Todoist write, so a preview never does it.
+  if (config.auto_close_tasks && options.applyActions) {
     console.log('  Checking for auto-closable tasks...');
     const recommendations = await detectResolvableTasks(
       client,

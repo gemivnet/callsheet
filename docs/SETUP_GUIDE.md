@@ -686,7 +686,7 @@ connectors:
 | Key | Default | What it does |
 | --- | --- | --- |
 | `timezone` | `TZ` env, then system | IANA zone for the brief's date, filenames, connector windows and the scheduler. Set it explicitly. |
-| `auto_close_tasks` | `false` | Closes Todoist tasks that an email or transaction proves are done. Each closure must quote its evidence, which is checked before anything is touched; at most three per run. Closures are logged and reported in the next brief. |
+| `auto_close_tasks` | `false` | Closes Todoist tasks that an email or transaction proves are done. Each closure must quote its evidence, which is checked before anything is touched; at most three per run, and only on real runs: a preview never closes anything. Closures are logged and reported in the next brief. |
 | `task_coach` | off | Focus picks, stuck-task decisions and captures — see [Task coach](#task-coach). |
 | `weekly_review_day` | off | Day name or `0`-`6` for a short week-in-review section at the top of that day's brief, and a Housekeeping list of stale `context` entries. |
 | `vacation` | none | Date ranges where brief generation is skipped, inclusive on both ends. Honoured by both the in-container scheduler and the CLI. Pass `--force` to generate anyway. |

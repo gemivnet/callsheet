@@ -2565,7 +2565,7 @@ describe('runPipeline', () => {
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
     try {
-      await core.generateBrief(autoCloseConfig, payload);
+      await core.generateBrief(autoCloseConfig, payload, [], { applyActions: true });
 
       // The detection call sees the tasks and the email, not a prefix of the payload.
       const detection = mockMessagesCreate.mock.calls[3][0] as {
@@ -2603,12 +2603,119 @@ describe('runPipeline', () => {
     await core.generateBrief(
       { model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output', auto_close_tasks: true },
       '[]',
+      [],
+      { applyActions: true },
     );
 
     // No tasks means no detection call at all — three calls, not four.
     expect(mockMessagesCreate).toHaveBeenCalledTimes(3);
     const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
     expect(logs.some((l) => l.includes('No tasks to auto-close'))).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it('never auto-closes a task on a preview, however strong the evidence', async () => {
+    process.env.TODOIST_TOKEN_PERSON1 = 'fake-todoist-token';
+    const payload = JSON.stringify([
+      {
+        source: 'todoist',
+        data: {
+          accounts: [
+            {
+              person: 'Person1',
+              today: [{ id: '12345', content: 'Pay electric bill', isRecurring: false }],
+            },
+          ],
+        },
+      },
+      {
+        source: 'gmail',
+        data: {
+          accounts: [
+            {
+              person: 'Person1',
+              emails: [{ subject: 'Payment received', snippet: 'Your payment was received.' }],
+            },
+          ],
+        },
+      },
+    ]);
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(JSON.stringify({ title: 'B', sections: [] })))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
+    mockReadFileSync.mockImplementation((path: unknown) =>
+      String(path).includes('system.md') ? 'System prompt.' : '{}',
+    );
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    const mockFetch = jest.fn<(...args: unknown[]) => Promise<{ ok: boolean }>>();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await core.generateBrief(
+        {
+          model: 'claude-sonnet-4-20250514',
+          output_dir: '/tmp/output',
+          auto_close_tasks: true,
+          connectors: {
+            todoist: { accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }] },
+          },
+        },
+        payload,
+      );
+
+      // No detection call and no Todoist request: closing a task is a write.
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(3);
+      expect(mockFetch).not.toHaveBeenCalled();
+      const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+      expect(logs.some((l) => l.includes('auto-closable'))).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.TODOIST_TOKEN_PERSON1;
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it("records the language phrase on a real run, never on a preview's", async () => {
+    const config: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      connectors: { language: { enabled: true, label_prefix: 'Español' } },
+    };
+    const briefJson = JSON.stringify({
+      title: 'B',
+      sections: [
+        {
+          heading: 'Executive Brief',
+          items: [{ label: 'Español: "¿Dónde está la estación?" — Where is the station?' }],
+        },
+      ],
+    });
+    const queueRun = () =>
+      mockMessagesCreate
+        .mockResolvedValueOnce(mockApiResponse(briefJson))
+        .mockResolvedValueOnce(mockApiResponse('[]'))
+        .mockResolvedValueOnce(mockApiResponse('[]'));
+    mockReadFileSync.mockImplementation((path: unknown) =>
+      String(path).includes('system.md') ? 'System prompt.' : '{}',
+    );
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    const historyWrites = () =>
+      mockWriteFileSync.mock.calls.filter((c) => String(c[0]).endsWith('language_history.json'));
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    queueRun();
+    await core.generateBrief(config, '[]');
+    expect(historyWrites()).toHaveLength(0);
+
+    queueRun();
+    await core.generateBrief(config, '[]', [], { applyActions: true });
+    expect(historyWrites()).toHaveLength(1);
+    expect(String(historyWrites()[0][1])).toContain('¿Dónde está la estación?');
     consoleSpy.mockRestore();
   });
 

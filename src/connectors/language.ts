@@ -270,9 +270,10 @@ export function extractPhraseFromBrief(brief: Brief, labelPrefix: string): Extra
  * retention horizon. Safe to call with a brief that has no phrase — it
  * silently no-ops.
  *
- * Called from core.ts after `generateBrief` returns. Errors are swallowed
- * because recording phrases is strictly an ergonomic nicety — a failure
- * here must never block the brief from printing.
+ * Called at the end of a real run's `generateBrief`, never a preview's: a
+ * preview's phrase is not printed, so it must not replace the one that was.
+ * Errors are swallowed because recording phrases is strictly an ergonomic
+ * nicety — a failure here must never block the brief from printing.
  */
 export function recordBriefPhrase(
   brief: Brief,
