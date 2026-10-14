@@ -122,6 +122,8 @@ export interface AutoCloseRecommendation {
   task_content: string;
   person: string;
   reason: string;
+  /** The verbatim text from an email or transaction that proves the task done. */
+  evidence?: string;
 }
 
 /** Brief structure that Claude outputs. */

@@ -10,13 +10,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import yaml from 'js-yaml';
-import type {
-  CallsheetConfig,
-  ConnectorResult,
-  Brief,
-  AutoCloseRecommendation,
-  HouseholdMember,
-} from './types.js';
+import type { CallsheetConfig, ConnectorResult, Brief, HouseholdMember } from './types.js';
 import { loadConnectors } from './connectors/index.js';
 import { recordBriefPhrase } from './connectors/language.js';
 import { renderPdf } from './render.js';
@@ -24,10 +18,18 @@ import { logUsage } from './usage.js';
 import { todayYmd, shiftYmd, formatLongDate } from './dates.js';
 import { deriveStationsFromEvents, type AirportAlias } from './airports.js';
 import { printAndConfirm, type PrintOptions, type PrintResult } from './print.js';
+import { extractResponseText, stripJsonCodeFences } from './llm.js';
+import {
+  buildAutoCloseContext,
+  closeTodoistTasks,
+  detectResolvableTasks,
+  saveAutoCloseLog,
+} from './autoclose.js';
 import { recordRun, isScheduledTrigger, type RunTrigger } from './status.js';
 
-// Printing moved to its own module; re-exported so existing imports keep working.
+// Moved to their own modules; re-exported so existing imports keep working.
 export { printPdf } from './print.js';
+export { extractResponseText, stripJsonCodeFences } from './llm.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -132,21 +134,6 @@ export function formatUnknownError(err: unknown): string {
   return String(err);
 }
 
-/**
- * Strip Markdown code fences from a string before JSON.parse.
- *
- * Claude sometimes wraps JSON output in ```json ... ``` even when told not to,
- * and sometimes emits commentary before or after the fenced block. Extracts
- * the first fenced region anywhere in the text; falls back to the trimmed
- * input when no fence is present.
- */
-export function stripJsonCodeFences(text: string): string {
-  const trimmed = text.trim();
-  // Unanchored so trailing/leading commentary outside the fence is ignored.
-  const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/.exec(trimmed);
-  return fenceMatch ? fenceMatch[1].trim() : trimmed;
-}
-
 export function loadConfig(configPath: string): CallsheetConfig {
   let config: CallsheetConfig;
   try {
@@ -225,38 +212,6 @@ function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
       },
     );
   });
-}
-
-/**
- * Pull the text out of a Claude response.
- *
- * Indexing `content[0]` assumed the first block is always text, which stops
- * being true the moment a response leads with anything else, and said nothing
- * useful when a response came back truncated or declined. `stop_reason` is
- * checked here so those cases fail with a description of what happened rather
- * than a parse error further down.
- */
-export function extractResponseText(response: {
-  content: { type: string; text?: string }[];
-  stop_reason?: string | null;
-}): string {
-  if (response.stop_reason === 'refusal') {
-    throw new Error('Claude declined to answer this request.');
-  }
-
-  const text = response.content
-    .filter((b) => b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text)
-    .join('');
-
-  if (!text) {
-    throw new Error(`No text in response (stop_reason: ${response.stop_reason ?? 'unknown'}).`);
-  }
-  if (response.stop_reason === 'max_tokens') {
-    throw new Error('Response hit the output limit and is incomplete — raise max_tokens.');
-  }
-
-  return text;
 }
 
 /** Fetch one connector under a deadline, logging the outcome. */
@@ -1020,139 +975,6 @@ function buildDiffContext(prev: { brief: Brief; label: string }): string {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-close: optionally close Todoist tasks when data shows they're resolved
-// ---------------------------------------------------------------------------
-
-async function detectResolvableTasks(
-  client: Anthropic,
-  dataPayload: string,
-  outputDir: string,
-): Promise<AutoCloseRecommendation[]> {
-  try {
-    const response = await client.messages.create({
-      model: CRITIQUE_MODEL,
-      max_tokens: HOUSEKEEPING_MAX_TOKENS,
-      output_config: { effort: 'low' },
-      system:
-        'You identify Todoist tasks that should be CLOSED because another data source proves they are resolved. ' +
-        'Return a JSON array of objects with: task_id, task_content, person, reason. ' +
-        'Be EXTREMELY conservative. Only recommend closing a task if there is CLEAR, UNAMBIGUOUS evidence: ' +
-        "- An email confirmation that the exact action was completed (e.g. 'subscription cancelled', 'payment received', 'LOA approved') " +
-        '- A transaction showing the bill was paid ' +
-        "- A delivery confirmation for something that had a 'track package' task " +
-        "Do NOT close tasks based on: assumptions, partial evidence, or if you're merely unsure whether it's done. " +
-        'When in doubt, do NOT close. Return [] if nothing qualifies. Return ONLY the JSON array.',
-      messages: [
-        {
-          role: 'user',
-          content: `Here is today's connector data. Find Todoist tasks that are proven resolved by emails, transactions, or other sources:\n\n${dataPayload.slice(0, 8000)}`,
-        },
-      ],
-    });
-
-    logUsage(
-      outputDir,
-      CRITIQUE_MODEL,
-      'auto_close',
-      response.usage.input_tokens,
-      response.usage.output_tokens,
-    );
-
-    const text = stripJsonCodeFences(extractResponseText(response));
-    return JSON.parse(text) as AutoCloseRecommendation[];
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log(`  Warning: Auto-close detection failed: ${msg}`);
-    runtimeErrors.add('auto_close', msg, 'warning');
-    return [];
-  }
-}
-
-async function closeTodoistTasks(
-  recommendations: AutoCloseRecommendation[],
-  config: CallsheetConfig,
-): Promise<AutoCloseRecommendation[]> {
-  const closed: AutoCloseRecommendation[] = [];
-  const accounts = (config.connectors?.todoist?.accounts ?? []) as {
-    name: string;
-    token_env: string;
-  }[];
-
-  for (const rec of recommendations) {
-    // Find the right token for this person
-    const acct = accounts.find((a) => a.name.toLowerCase() === rec.person.toLowerCase());
-    const token = acct ? (process.env[acct.token_env] ?? '') : '';
-    if (!token) {
-      console.log(`  Auto-close: skipping "${rec.task_content}" — no token for ${rec.person}`);
-      continue;
-    }
-
-    try {
-      const resp = await fetch(`https://api.todoist.com/api/v1/tasks/${rec.task_id}/close`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (resp.ok) {
-        closed.push(rec);
-        console.log(`  Auto-closed: "${rec.task_content}" (${rec.person}) — ${rec.reason}`);
-      } else {
-        console.log(`  Auto-close failed (${resp.status}): "${rec.task_content}"`);
-      }
-    } catch (e) {
-      console.log(`  Auto-close error: "${rec.task_content}" — ${e}`);
-    }
-  }
-
-  return closed;
-}
-
-function saveAutoCloseLog(closed: AutoCloseRecommendation[], outputDir: string): void {
-  if (!closed.length) return;
-  const logDir = join(outputDir, 'auto_close');
-  mkdirSync(logDir, { recursive: true });
-  const today = todayYmd();
-  writeFileSync(
-    join(logDir, `closed_${today}.json`),
-    JSON.stringify({ date: today, closed }, null, 2),
-  );
-}
-
-function loadRecentAutoCloses(outputDir: string): AutoCloseRecommendation[] {
-  const logDir = join(outputDir, 'auto_close');
-  if (!existsSync(logDir)) return [];
-
-  // Load yesterday's auto-closes to report in today's brief
-  const dateStr = shiftYmd(todayYmd(), -1);
-  const logPath = join(logDir, `closed_${dateStr}.json`);
-
-  try {
-    if (existsSync(logPath)) {
-      const data = JSON.parse(readFileSync(logPath, 'utf-8'));
-      return data.closed as AutoCloseRecommendation[];
-    }
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
-
-function buildAutoCloseContext(outputDir: string): string {
-  const recent = loadRecentAutoCloses(outputDir);
-  if (!recent.length) return '';
-
-  let ctx = '\n\n## Auto-closed tasks\n\n';
-  ctx +=
-    'The following tasks were automatically closed yesterday because data confirmed they were resolved. ';
-  ctx +=
-    '**You MUST mention these in the Executive Brief** so the user knows what was auto-closed and can re-open if needed:\n\n';
-  for (const r of recent) {
-    ctx += `- ✅ "${r.task_content}" (${r.person}) — ${r.reason}\n`;
-  }
-  return ctx;
-}
-
-// ---------------------------------------------------------------------------
 
 function buildConnectorIssuesContext(
   issues: ConnectorIssue[],
@@ -1532,7 +1354,14 @@ export async function generateBrief(
   // Auto-close: optionally close Todoist tasks proven resolved by other data sources
   if (config.auto_close_tasks) {
     console.log('  Checking for auto-closable tasks...');
-    const recommendations = await detectResolvableTasks(client, dataPayload, outputDir);
+    const recommendations = await detectResolvableTasks(
+      client,
+      CRITIQUE_MODEL,
+      dataPayload,
+      outputDir,
+      (msg) => runtimeErrors.add('auto_close', msg, 'warning'),
+      HOUSEKEEPING_MAX_TOKENS,
+    );
     if (recommendations.length) {
       console.log(`  Found ${recommendations.length} task(s) to auto-close:`);
       const closed = await closeTodoistTasks(recommendations, config);

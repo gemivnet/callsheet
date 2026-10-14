@@ -1848,138 +1848,6 @@ describe('generateBrief', () => {
     expect(opts.messages[0].content).toContain('A quiet day overall');
   });
 
-  it('should run auto-close flow when config.auto_close_tasks is true', async () => {
-    const autoCloseConfig: CallsheetConfig = {
-      model: 'claude-sonnet-4-20250514',
-      output_dir: '/tmp/output',
-      auto_close_tasks: true,
-      connectors: {
-        todoist: {
-          accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }],
-        },
-      },
-    };
-
-    process.env.TODOIST_TOKEN_PERSON1 = 'fake-todoist-token';
-
-    const briefJson = JSON.stringify({
-      title: 'Auto-close Brief',
-      sections: [{ heading: 'Overview', body: 'Tasks resolved.' }],
-    });
-
-    const autoCloseRecs = JSON.stringify([
-      {
-        task_id: '12345',
-        task_content: 'Pay electric bill',
-        person: 'Person1',
-        reason: 'Payment confirmed via email',
-      },
-    ]);
-
-    mockMessagesCreate
-      .mockResolvedValueOnce(mockApiResponse(briefJson)) // brief
-      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
-      .mockResolvedValueOnce(mockApiResponse('[]')) // critique
-      .mockResolvedValueOnce(mockApiResponse(autoCloseRecs)); // auto-close detection
-
-    mockReadFileSync.mockImplementation((path: unknown) => {
-      const p = path as string;
-      if (p.includes('system.md')) return 'System prompt.';
-      return '{}';
-    });
-    mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-
-    // Mock global fetch for Todoist close API
-    const mockFetch = jest
-      .fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
-      .mockResolvedValue({ ok: true, status: 204 });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-
-    try {
-      const brief = await core.generateBrief(autoCloseConfig, '{"todoist": "data"}');
-      expect(brief.title).toMatch(DATE_TITLE);
-
-      // Verify Todoist close API was called
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const fetchCall = mockFetch.mock.calls[0];
-      expect(fetchCall[0]).toContain('tasks/12345/close');
-
-      // Verify auto-close log was saved
-      expect(mockWriteFileSync).toHaveBeenCalled();
-      const autoCloseWriteCall = mockWriteFileSync.mock.calls.find((call) =>
-        (call[0] as string).includes('auto_close'),
-      );
-      expect(autoCloseWriteCall).toBeDefined();
-    } finally {
-      globalThis.fetch = originalFetch;
-      delete process.env.TODOIST_TOKEN_PERSON1;
-      consoleSpy.mockRestore();
-    }
-  });
-
-  it('should handle auto-close with no matching token', async () => {
-    const autoCloseConfig: CallsheetConfig = {
-      model: 'claude-sonnet-4-20250514',
-      output_dir: '/tmp/output',
-      auto_close_tasks: true,
-      connectors: {
-        todoist: {
-          accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }],
-        },
-      },
-    };
-
-    // No token set in env
-
-    const briefJson = JSON.stringify({
-      title: 'No Token Brief',
-      sections: [],
-    });
-
-    const autoCloseRecs = JSON.stringify([
-      {
-        task_id: '99999',
-        task_content: 'Some task',
-        person: 'Unknown', // no matching account
-        reason: 'Resolved',
-      },
-    ]);
-
-    mockMessagesCreate
-      .mockResolvedValueOnce(mockApiResponse(briefJson))
-      .mockResolvedValueOnce(mockApiResponse('[]'))
-      .mockResolvedValueOnce(mockApiResponse('[]'))
-      .mockResolvedValueOnce(mockApiResponse(autoCloseRecs));
-
-    mockReadFileSync.mockImplementation((path: unknown) => {
-      const p = path as string;
-      if (p.includes('system.md')) return 'System prompt.';
-      return '{}';
-    });
-    mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-
-    const mockFetch = jest.fn();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-
-    try {
-      const brief = await core.generateBrief(autoCloseConfig, '{}');
-      expect(brief.title).toMatch(DATE_TITLE);
-      // fetch should NOT have been called (no token)
-      expect(mockFetch).not.toHaveBeenCalled();
-    } finally {
-      globalThis.fetch = originalFetch;
-      consoleSpy.mockRestore();
-    }
-  });
-
   it('should include household context and extras in prompt', async () => {
     const configWithContext: CallsheetConfig = {
       model: 'claude-sonnet-4-20250514',
@@ -2643,6 +2511,129 @@ describe('runPipeline', () => {
     expect(opts.system).toContain('Pay bill');
   });
 
+  it("closes a task an email proves done, through the person's own token", async () => {
+    const autoCloseConfig: CallsheetConfig = {
+      model: 'claude-sonnet-4-20250514',
+      output_dir: '/tmp/output',
+      auto_close_tasks: true,
+      connectors: {
+        todoist: { accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }] },
+      },
+    };
+    process.env.TODOIST_TOKEN_PERSON1 = 'fake-todoist-token';
+    const payload = JSON.stringify([
+      {
+        source: 'todoist',
+        data: {
+          accounts: [
+            {
+              person: 'Person1',
+              today: [{ id: '12345', content: 'Pay electric bill', isRecurring: false }],
+            },
+          ],
+        },
+      },
+      {
+        source: 'gmail',
+        data: {
+          accounts: [
+            {
+              person: 'Person1',
+              emails: [
+                {
+                  from: 'Utility Co <billing@example.com>',
+                  subject: 'Payment received',
+                  snippet: 'Thank you, your payment of $42.10 was received.',
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    mockMessagesCreate
+      .mockResolvedValueOnce(
+        mockApiResponse(
+          JSON.stringify({ title: 'Brief', sections: [{ heading: 'A', body: 'b' }] }),
+        ),
+      )
+      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('[]')) // critique
+      .mockResolvedValueOnce(
+        mockApiResponse(
+          JSON.stringify({
+            closures: [
+              {
+                task_id: '12345',
+                evidence_id: 'e1',
+                evidence_quote: 'your payment of $42.10 was received',
+                reason: 'Payment confirmation email',
+              },
+            ],
+          }),
+        ),
+      );
+    mockReadFileSync.mockImplementation((path: unknown) =>
+      String(path).includes('system.md') ? 'System prompt.' : '{}',
+    );
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    const mockFetch = jest
+      .fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
+      .mockResolvedValue({ ok: true, status: 204 });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await core.generateBrief(autoCloseConfig, payload);
+
+      // The detection call sees the tasks and the email, not a prefix of the payload.
+      const detection = mockMessagesCreate.mock.calls[3][0] as {
+        messages: { content: string }[];
+        output_config: { format: { type: string } };
+      };
+      expect(detection.messages[0].content).toContain('Pay electric bill');
+      expect(detection.messages[0].content).toContain('Payment received');
+      expect(detection.output_config.format.type).toBe('json_schema');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0][0])).toContain('tasks/12345/close');
+      expect(mockWriteFileSync.mock.calls.some((c) => String(c[0]).includes('auto_close'))).toBe(
+        true,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.TODOIST_TOKEN_PERSON1;
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('logs that nothing qualified when the payload has no tasks to check', async () => {
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(JSON.stringify({ title: 'B', sections: [] })))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
+    mockReadFileSync.mockImplementation((path: unknown) =>
+      String(path).includes('system.md') ? 'System prompt.' : '{}',
+    );
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    await core.generateBrief(
+      { model: 'claude-sonnet-4-20250514', output_dir: '/tmp/output', auto_close_tasks: true },
+      '[]',
+    );
+
+    // No tasks means no detection call at all — three calls, not four.
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(3);
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes('No tasks to auto-close'))).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
   it('should include runtime errors in error brief', async () => {
     // Add a runtime error before generating
     core.runtimeErrors.add('test_pipeline', 'something broke', 'error');
@@ -2719,188 +2710,5 @@ describe('runPipeline', () => {
     expect(logs.some((l) => l.includes('Self-critique: 2 issue(s)'))).toBe(true);
 
     consoleSpy.mockRestore();
-  });
-
-  it('should log "No tasks to auto-close" when detection returns empty', async () => {
-    const autoCloseConfig: CallsheetConfig = {
-      model: 'claude-sonnet-4-20250514',
-      output_dir: '/tmp/output',
-      auto_close_tasks: true,
-      connectors: { todoist: { accounts: [] } },
-    };
-
-    const briefJson = JSON.stringify({ title: 'No Close Brief', sections: [] });
-
-    mockMessagesCreate
-      .mockResolvedValueOnce(mockApiResponse(briefJson)) // brief
-      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
-      .mockResolvedValueOnce(mockApiResponse('[]')) // critique
-      .mockResolvedValueOnce(mockApiResponse('[]')); // auto-close detection (empty)
-
-    mockReadFileSync.mockImplementation((path: unknown) => {
-      const p = path as string;
-      if (p.includes('system.md')) return 'System prompt.';
-      return '{}';
-    });
-    mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-
-    const brief = await core.generateBrief(autoCloseConfig, '{}');
-    expect(brief.title).toMatch(DATE_TITLE);
-
-    const logs = consoleSpy.mock.calls.map((c) => c[0] as string);
-    expect(logs.some((l) => l.includes('No tasks to auto-close'))).toBe(true);
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle auto-close detection API failure gracefully', async () => {
-    const autoCloseConfig: CallsheetConfig = {
-      model: 'claude-sonnet-4-20250514',
-      output_dir: '/tmp/output',
-      auto_close_tasks: true,
-      connectors: { todoist: { accounts: [] } },
-    };
-
-    const briefJson = JSON.stringify({ title: 'Detection Fail Brief', sections: [] });
-
-    mockMessagesCreate
-      .mockResolvedValueOnce(mockApiResponse(briefJson)) // brief
-      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
-      .mockResolvedValueOnce(mockApiResponse('[]')) // critique
-      .mockRejectedValueOnce(new Error('API timeout')); // auto-close detection fails
-
-    mockReadFileSync.mockImplementation((path: unknown) => {
-      const p = path as string;
-      if (p.includes('system.md')) return 'System prompt.';
-      return '{}';
-    });
-    mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-
-    const brief = await core.generateBrief(autoCloseConfig, '{}');
-    expect(brief.title).toMatch(DATE_TITLE);
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle Todoist close API failure gracefully', async () => {
-    const autoCloseConfig: CallsheetConfig = {
-      model: 'claude-sonnet-4-20250514',
-      output_dir: '/tmp/output',
-      auto_close_tasks: true,
-      connectors: {
-        todoist: {
-          accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }],
-        },
-      },
-    };
-
-    process.env.TODOIST_TOKEN_PERSON1 = 'fake-token';
-
-    const briefJson = JSON.stringify({ title: 'Close Fail Brief', sections: [] });
-
-    const autoCloseRecs = JSON.stringify([
-      {
-        task_id: '999',
-        task_content: 'Close failing task',
-        person: 'Person1',
-        reason: 'Should be resolved',
-      },
-    ]);
-
-    mockMessagesCreate
-      .mockResolvedValueOnce(mockApiResponse(briefJson))
-      .mockResolvedValueOnce(mockApiResponse('[]'))
-      .mockResolvedValueOnce(mockApiResponse('[]'))
-      .mockResolvedValueOnce(mockApiResponse(autoCloseRecs));
-
-    mockReadFileSync.mockImplementation((path: unknown) => {
-      const p = path as string;
-      if (p.includes('system.md')) return 'System prompt.';
-      return '{}';
-    });
-    mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-
-    // Mock fetch to throw a network error
-    const mockFetch = jest
-      .fn<(...args: unknown[]) => Promise<unknown>>()
-      .mockRejectedValue(new Error('Network error'));
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-
-    try {
-      const brief = await core.generateBrief(autoCloseConfig, '{}');
-      expect(brief.title).toMatch(DATE_TITLE);
-    } finally {
-      globalThis.fetch = originalFetch;
-      delete process.env.TODOIST_TOKEN_PERSON1;
-      consoleSpy.mockRestore();
-    }
-  });
-
-  it('should handle Todoist close API returning non-ok status', async () => {
-    const autoCloseConfig: CallsheetConfig = {
-      model: 'claude-sonnet-4-20250514',
-      output_dir: '/tmp/output',
-      auto_close_tasks: true,
-      connectors: {
-        todoist: {
-          accounts: [{ name: 'Person1', token_env: 'TODOIST_TOKEN_PERSON1' }],
-        },
-      },
-    };
-
-    process.env.TODOIST_TOKEN_PERSON1 = 'fake-token';
-
-    const briefJson = JSON.stringify({ title: 'Non-ok Close Brief', sections: [] });
-
-    const autoCloseRecs = JSON.stringify([
-      {
-        task_id: '888',
-        task_content: 'Non-ok close task',
-        person: 'Person1',
-        reason: 'Should fail',
-      },
-    ]);
-
-    mockMessagesCreate
-      .mockResolvedValueOnce(mockApiResponse(briefJson))
-      .mockResolvedValueOnce(mockApiResponse('[]'))
-      .mockResolvedValueOnce(mockApiResponse('[]'))
-      .mockResolvedValueOnce(mockApiResponse(autoCloseRecs));
-
-    mockReadFileSync.mockImplementation((path: unknown) => {
-      const p = path as string;
-      if (p.includes('system.md')) return 'System prompt.';
-      return '{}';
-    });
-    mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-
-    const mockFetch = jest
-      .fn<(...args: unknown[]) => Promise<{ ok: boolean; status: number }>>()
-      .mockResolvedValue({ ok: false, status: 403 });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-
-    try {
-      const brief = await core.generateBrief(autoCloseConfig, '{}');
-      expect(brief.title).toMatch(DATE_TITLE);
-      // Should NOT save auto-close log since nothing was closed
-    } finally {
-      globalThis.fetch = originalFetch;
-      delete process.env.TODOIST_TOKEN_PERSON1;
-      consoleSpy.mockRestore();
-    }
   });
 });
