@@ -567,7 +567,7 @@ lpstat -p -d
 Add it to `config.yaml`:
 
 ```yaml
-printer: "Brother_MFC_L8900CDW_series"
+printer: "Your_Printer_Name"
 ```
 
 Test a full print run:
