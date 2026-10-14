@@ -15,14 +15,25 @@ export interface MonthlyUsage {
   entries: UsageEntry[];
 }
 
-/** Model pricing per million tokens (as of 2026) */
+/**
+ * Model pricing per million tokens (list prices as of 2026-10).
+ *
+ * Sonnet 5 was carried at $3/$15 when it lists at $2/$10, so every month since
+ * the switch to it was overstated by half. Summaries re-price stored entries
+ * from their token counts with this table, so correcting a row here corrects
+ * history too.
+ */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   // Current generation
-  'claude-opus-5': { input: 5, output: 25 },
-  'claude-sonnet-5': { input: 3, output: 15 },
-  'claude-haiku-4-5': { input: 1, output: 5 },
-  'claude-fable-5': { input: 10, output: 50 },
+  'claude-fable-5-1': { input: 10, output: 50 },
+  'claude-opus-5-5': { input: 4, output: 20 },
+  'claude-sonnet-5-5': { input: 2, output: 10 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
   // Previous generations, kept so historical usage files still price correctly
+  'claude-fable-5': { input: 10, output: 50 },
+  'claude-opus-5': { input: 5, output: 25 },
+  'claude-sonnet-5': { input: 2, output: 10 },
+  'claude-haiku-4-5': { input: 1, output: 5 },
   'claude-opus-4-8': { input: 5, output: 25 },
   'claude-opus-4-7': { input: 5, output: 25 },
   'claude-opus-4-6': { input: 5, output: 25 },
@@ -44,13 +55,22 @@ export function getDefaultPricing(model?: string): { input: number; output: numb
   return { input: 3, output: 15 }; // Sonnet-tier assumption
 }
 
+/** Cost in USD of one call, from the pricing table (or the family estimate). */
+export function priceCall(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = MODEL_PRICING[model] ?? getDefaultPricing(model);
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+}
+
 function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const known = MODEL_PRICING[model];
-  if (!known) {
+  if (!MODEL_PRICING[model]) {
     console.log(`  Note: no pricing entry for "${model}" — estimating from model family.`);
   }
-  const pricing = known ?? getDefaultPricing(model);
-  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return priceCall(model, inputTokens, outputTokens);
+}
+
+/** An entry with its cost recomputed from tokens, so stale stored prices never reach a total. */
+function repriced(entry: UsageEntry): UsageEntry {
+  return { ...entry, cost_usd: priceCall(entry.model, entry.input_tokens, entry.output_tokens) };
 }
 
 function getUsageDir(outputDir: string): string {
@@ -108,7 +128,8 @@ export function getMonthlyUsageData(outputDir: string, month?: string): MonthlyU
   const filePath = getMonthlyFilePath(outputDir, month);
   try {
     if (existsSync(filePath)) {
-      return JSON.parse(readFileSync(filePath, 'utf-8')) as MonthlyUsage;
+      const data = JSON.parse(readFileSync(filePath, 'utf-8')) as MonthlyUsage;
+      return { ...data, entries: (data.entries ?? []).map(repriced) };
     }
   } catch {
     /* ignore */

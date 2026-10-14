@@ -1,8 +1,10 @@
 # callsheet config
 # Copy to config.yaml and customize for your household.
 
-# Claude model. Sonnet 5 = fast + cheap (~$0.03/day). Opus 5 = deeper insights (~$0.08/day).
-model: claude-sonnet-5
+# Claude model that writes the brief. Sonnet 5.5 is the default (about $0.25/day for a
+# busy two-account household, including the housekeeping passes, which run on Haiku 5.5).
+# Opus 5.5 reasons more carefully across sources for roughly twice that.
+model: claude-sonnet-5-5
 
 # IANA timezone for the household. Sets the brief's date, output filenames,
 # connector query windows and the scheduler. Falls back to the TZ environment

@@ -32,10 +32,45 @@ export { printPdf } from './print.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Model that writes the brief when config doesn't name one. */
-export const DEFAULT_MODEL = 'claude-sonnet-5';
+export const DEFAULT_MODEL = 'claude-sonnet-5-5';
 
 /** Cheap model for the housekeeping passes: memory, self-critique, auto-close. */
-export const CRITIQUE_MODEL = 'claude-haiku-4-5';
+export const CRITIQUE_MODEL = 'claude-haiku-5-5';
+
+/**
+ * Output budget for the housekeeping passes. Current small models think before
+ * answering and that reasoning is drawn from the same budget, so the old
+ * 512-2048 token caps would cut the JSON off mid-array — the exact failure that
+ * silently lost memory on most runs for four months in 2026. Cheap at Haiku
+ * prices; the passes also run at low effort.
+ */
+const HOUSEKEEPING_MAX_TOKENS = 8_000;
+
+/**
+ * Models that accept the server-side refusal fallback. On these, a request a
+ * safety classifier declines is re-run on Anthropic's recommended fallback
+ * model inside the same call instead of coming back empty — a household brief
+ * full of medical and financial detail is exactly the kind of payload a
+ * classifier can occasionally trip on.
+ */
+const SERVER_FALLBACK_MODELS: ReadonlySet<string> = new Set([
+  'claude-sonnet-5-5',
+  'claude-opus-5-5',
+  'claude-opus-5',
+  'claude-fable-5-1',
+]);
+
+/** The parts of a Messages API response the pipeline reads, from either endpoint. */
+interface BriefResponse {
+  content: { type: string; text?: string }[];
+  stop_reason?: string | null;
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+/** True when `model` accepts `fallbacks: "default"`. */
+export function supportsServerFallback(model: string): boolean {
+  return SERVER_FALLBACK_MODELS.has(model);
+}
 
 /**
  * How much of the raw payload the self-critique sees.
@@ -454,7 +489,8 @@ async function generateMemoryInsights(
       model,
       // 512 truncated the JSON array mid-string on most runs, so the parse
       // failed and a day's memory was silently lost.
-      max_tokens: 2048,
+      max_tokens: HOUSEKEEPING_MAX_TOKENS,
+      output_config: { effort: 'low' },
       system:
         "You extract key facts worth remembering for tomorrow's brief. " +
         'Return a JSON array of 3-8 short strings. Focus on: ' +
@@ -705,7 +741,8 @@ export async function critiqueBrief(
   try {
     const response = await client.messages.create({
       model: CRITIQUE_MODEL, // Use Haiku for cheap self-review
-      max_tokens: 1024,
+      max_tokens: HOUSEKEEPING_MAX_TOKENS,
+      output_config: { effort: 'low' },
       system:
         'You are a quality reviewer for a daily household brief. ' +
         'Analyze the brief against the raw data it was built from. Return a JSON array of 0-5 short strings describing problems found. ' +
@@ -994,7 +1031,8 @@ async function detectResolvableTasks(
   try {
     const response = await client.messages.create({
       model: CRITIQUE_MODEL,
-      max_tokens: 512,
+      max_tokens: HOUSEKEEPING_MAX_TOKENS,
+      output_config: { effort: 'low' },
       system:
         'You identify Todoist tasks that should be CLOSED because another data source proves they are resolved. ' +
         'Return a JSON array of objects with: task_id, task_content, person, reason. ' +
@@ -1384,45 +1422,55 @@ export async function generateBrief(
   let brief: Brief;
 
   try {
-    const response = await withRetry(
+    const params: Anthropic.MessageCreateParamsNonStreaming = {
+      model,
+      // Current models reason before answering, and that reasoning is
+      // drawn from the same budget as the response, so this has to cover
+      // both. Kept under the SDK's ~21k ceiling for non-streaming
+      // requests.
+      max_tokens: 20_000,
+      // Without an explicit effort the model reasons at full depth, and on
+      // a payload this size it spent an entire 16k budget thinking and
+      // returned no brief at all. The judgement calls here are modest —
+      // what to include and how to phrase it — and the facts arrive
+      // pre-computed, so it does not need to deliberate at that length.
+      output_config: { effort: 'medium' },
+      system: systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Today is ${dateStr}.\n\n` +
+            (weekly
+              ? 'This is a **Week in Review** day. Generate the normal daily brief as usual — ' +
+                'but ALSO add a compact "Week in Review" section as the VERY FIRST section of ' +
+                'the brief (before the Executive Brief). This section must use `body` (not `items`) ' +
+                'and contain a single short paragraph of 2–4 sentences (~60 words max) reflecting ' +
+                'on the past 7 days: notable wins, patterns, themes, or progress. Pull from memory ' +
+                'entries and the 7-day calendar lookback. Keep it retrospective in tone and tight — ' +
+                'it is a supplement, NOT a replacement for the daily brief. Do not repeat week-in-review ' +
+                'content in other sections.\n\n'
+              : '') +
+            'Here is all available data from the connected sources:\n' +
+            `<data>\n${dataPayload}\n</data>\n` +
+            diffContext +
+            '\n' +
+            'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
+        },
+      ],
+    };
+    // The fallback is a beta parameter, so models that take it go through the
+    // beta endpoint; the response carries the same content, stop_reason and
+    // usage either way.
+    const response = await withRetry<BriefResponse>(
       () =>
-        client.messages.create({
-          model,
-          // Current models reason before answering, and that reasoning is
-          // drawn from the same budget as the response, so this has to cover
-          // both. Kept under the SDK's ~21k ceiling for non-streaming
-          // requests.
-          max_tokens: 20_000,
-          // Without an explicit effort the model reasons at full depth, and on
-          // a payload this size it spent an entire 16k budget thinking and
-          // returned no brief at all. The judgement calls here are modest —
-          // what to include and how to phrase it — and the facts arrive
-          // pre-computed, so it does not need to deliberate at that length.
-          output_config: { effort: 'medium' },
-          system: systemPrompt,
-          messages: [
-            {
-              role: 'user',
-              content:
-                `Today is ${dateStr}.\n\n` +
-                (weekly
-                  ? 'This is a **Week in Review** day. Generate the normal daily brief as usual — ' +
-                    'but ALSO add a compact "Week in Review" section as the VERY FIRST section of ' +
-                    'the brief (before the Executive Brief). This section must use `body` (not `items`) ' +
-                    'and contain a single short paragraph of 2–4 sentences (~60 words max) reflecting ' +
-                    'on the past 7 days: notable wins, patterns, themes, or progress. Pull from memory ' +
-                    'entries and the 7-day calendar lookback. Keep it retrospective in tone and tight — ' +
-                    'it is a supplement, NOT a replacement for the daily brief. Do not repeat week-in-review ' +
-                    'content in other sections.\n\n'
-                  : '') +
-                'Here is all available data from the connected sources:\n' +
-                `<data>\n${dataPayload}\n</data>\n` +
-                diffContext +
-                '\n' +
-                'Generate the morning brief JSON now. Return ONLY valid JSON matching the schema — no explanation, no code fences.',
-            },
-          ],
-        }),
+        supportsServerFallback(model)
+          ? client.beta.messages.create({
+              ...(params as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming),
+              betas: ['server-side-fallback-2026-07-01'],
+              fallbacks: 'default',
+            })
+          : client.messages.create(params),
       'Claude API call',
     );
 

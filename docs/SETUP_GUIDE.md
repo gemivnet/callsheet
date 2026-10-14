@@ -135,14 +135,17 @@ This is the only secret every setup needs. The rest depend on which connectors y
 In `config.yaml`, set the `model` field:
 
 ```yaml
-# Fast and cheap (~$0.02-0.04/day)
-model: claude-sonnet-5
+# The default: fast and capable (roughly $0.10-0.30/day, depending on how much
+# calendar, email and task data the household has)
+model: claude-sonnet-5-5
 
-# Deeper reasoning, better cross-referencing (~$0.15-0.20/day)
-model: claude-opus-5
+# Deeper reasoning, better cross-referencing (roughly twice the cost)
+model: claude-opus-5-5
 ```
 
 Start with Sonnet. Switch to Opus after you've dialed in your connectors and context — the quality difference is noticeable in the Executive Brief section, where Claude connects dots across data sources.
+
+The housekeeping passes (memory, self-critique, auto-close) always run on Claude Haiku 5.5, which costs a fraction of a cent per run. On models that support it, the brief request opts into Anthropic's server-side refusal fallback, so a request a safety classifier declines is retried on a fallback model instead of producing an error page.
 
 ---
 

@@ -55,6 +55,9 @@ const mockMessagesCreate = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 jest.unstable_mockModule('@anthropic-ai/sdk', () => ({
   default: jest.fn().mockImplementation(() => ({
     messages: { create: mockMessagesCreate },
+    // Models that take the server-side refusal fallback go through the beta
+    // endpoint. One mock serves both so mockResolvedValueOnce sequences hold.
+    beta: { messages: { create: mockMessagesCreate } },
   })),
 }));
 
@@ -1270,6 +1273,25 @@ describe('pingHeartbeat', () => {
   });
 });
 
+describe('supportsServerFallback', () => {
+  it('is on for the models that accept fallbacks: "default"', () => {
+    expect(core.supportsServerFallback('claude-sonnet-5-5')).toBe(true);
+    expect(core.supportsServerFallback('claude-opus-5-5')).toBe(true);
+  });
+
+  it('is off for models that do not', () => {
+    expect(core.supportsServerFallback('claude-haiku-5-5')).toBe(false);
+    expect(core.supportsServerFallback('claude-sonnet-5')).toBe(false);
+  });
+});
+
+describe('model defaults', () => {
+  it('writes the brief on Sonnet 5.5 and does housekeeping on Haiku 5.5', () => {
+    expect(core.DEFAULT_MODEL).toBe('claude-sonnet-5-5');
+    expect(core.CRITIQUE_MODEL).toBe('claude-haiku-5-5');
+  });
+});
+
 describe('isErrorBrief', () => {
   it('recognises the generation-failed page', () => {
     expect(
@@ -2210,6 +2232,31 @@ describe('runPipeline', () => {
     await expect(core.runPipeline(pipelineConfig)).rejects.toThrow('No data fetched');
 
     consoleSpy.mockRestore();
+  });
+
+  it('asks for the server-side refusal fallback when the model supports it', async () => {
+    setupPipelineMocks();
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    await core.runPipeline({ ...pipelineConfig, model: 'claude-sonnet-5-5' }, { preview: true });
+
+    const briefCall = mockMessagesCreate.mock.calls[0][0] as Record<string, unknown>;
+    expect(briefCall.model).toBe('claude-sonnet-5-5');
+    expect(briefCall.fallbacks).toBe('default');
+    expect(briefCall.betas).toEqual(['server-side-fallback-2026-07-01']);
+    logSpy.mockRestore();
+  });
+
+  it('does not send the fallback to a model that would reject it', async () => {
+    setupPipelineMocks();
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    await core.runPipeline(pipelineConfig, { preview: true });
+
+    const briefCall = mockMessagesCreate.mock.calls[0][0] as Record<string, unknown>;
+    expect(briefCall).not.toHaveProperty('fallbacks');
+    expect(briefCall).not.toHaveProperty('betas');
+    logSpy.mockRestore();
   });
 
   describe('delivery reporting', () => {

@@ -41,18 +41,14 @@ const CONNECTOR_INFO: {
     label: 'Google Calendar',
     description: "Today's events + 7-day lookahead",
     auth: 'Google OAuth (set up after wizard)',
-    fields: [
-      { key: 'account_name', label: 'Account name', placeholder: 'Your Name' },
-    ],
+    fields: [{ key: 'account_name', label: 'Account name', placeholder: 'Your Name' }],
   },
   {
     key: 'gmail',
     label: 'Gmail',
     description: 'Scans recent emails for actionable signals',
     auth: 'Google OAuth (set up after wizard)',
-    fields: [
-      { key: 'account_name', label: 'Account name', placeholder: 'Your Name' },
-    ],
+    fields: [{ key: 'account_name', label: 'Account name', placeholder: 'Your Name' }],
   },
   {
     key: 'market',
@@ -102,7 +98,7 @@ const CONNECTOR_INFO: {
 export function Setup({ onComplete }: Props) {
   const [step, setStep] = useState<Step>('welcome');
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('claude-sonnet-5');
+  const [model, setModel] = useState('claude-sonnet-5-5');
   const [enabledConnectors, setEnabledConnectors] = useState<Set<string>>(new Set());
   const [connectorFields, setConnectorFields] = useState<Record<string, Record<string, string>>>(
     {},
@@ -168,9 +164,7 @@ export function Setup({ onComplete }: Props) {
           conn.credentials_dir = 'secrets';
           conn.credentials_file = 'credentials.json';
           conn.lookahead_days = 7;
-          conn.accounts = [
-            { name: fields.account_name ?? 'Default', calendar_ids: ['primary'] },
-          ];
+          conn.accounts = [{ name: fields.account_name ?? 'Default', calendar_ids: ['primary'] }];
           break;
         case 'gmail':
           conn.credentials_dir = 'secrets';
@@ -262,8 +256,8 @@ export function Setup({ onComplete }: Props) {
         <div>
           <h2>Welcome to Callsheet</h2>
           <p style={{ color: '#6b7280', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-            This wizard will walk you through creating your configuration. You'll set up your
-            API key, choose a model, enable connectors, and add household context.
+            This wizard will walk you through creating your configuration. You'll set up your API
+            key, choose a model, enable connectors, and add household context.
           </p>
           <p style={{ color: '#6b7280', lineHeight: 1.6, marginBottom: '1.5rem' }}>
             You can always change these settings later from the Config page.
@@ -307,41 +301,41 @@ export function Setup({ onComplete }: Props) {
               className="card"
               style={{
                 cursor: 'pointer',
-                border:
-                  model === 'claude-sonnet-5' ? '2px solid #2563eb' : '1px solid #e5e7eb',
+                border: model === 'claude-sonnet-5-5' ? '2px solid #2563eb' : '1px solid #e5e7eb',
               }}
             >
               <input
                 type="radio"
                 name="model"
-                value="claude-sonnet-5"
-                checked={model === 'claude-sonnet-5'}
+                value="claude-sonnet-5-5"
+                checked={model === 'claude-sonnet-5-5'}
                 onChange={(e) => setModel(e.target.value)}
                 style={{ display: 'none' }}
               />
-              <div style={{ fontWeight: 600 }}>Sonnet 5</div>
+              <div style={{ fontWeight: 600 }}>Sonnet 5.5</div>
               <div className="muted">
-                Fast and cheap. ~$0.03-0.06/day. Great for most households.
+                Fast and capable. Roughly $0.10-0.30/day depending on how busy the household is.
+                Right for most households.
               </div>
             </label>
             <label
               className="card"
               style={{
                 cursor: 'pointer',
-                border: model === 'claude-opus-5' ? '2px solid #2563eb' : '1px solid #e5e7eb',
+                border: model === 'claude-opus-5-5' ? '2px solid #2563eb' : '1px solid #e5e7eb',
               }}
             >
               <input
                 type="radio"
                 name="model"
-                value="claude-opus-5"
-                checked={model === 'claude-opus-5'}
+                value="claude-opus-5-5"
+                checked={model === 'claude-opus-5-5'}
                 onChange={(e) => setModel(e.target.value)}
                 style={{ display: 'none' }}
               />
-              <div style={{ fontWeight: 600 }}>Opus 5</div>
+              <div style={{ fontWeight: 600 }}>Opus 5.5</div>
               <div className="muted">
-                Deeper reasoning, better cross-referencing. ~$0.06-0.12/day.
+                Deeper reasoning, better cross-referencing. Roughly twice the cost of Sonnet 5.5.
               </div>
             </label>
           </div>
@@ -432,9 +426,7 @@ export function Setup({ onComplete }: Props) {
                   }}
                 >
                   {key === 'people' ? (
-                    <label
-                      style={{ fontSize: '0.75rem', fontWeight: 500, color: '#6b7280' }}
-                    >
+                    <label style={{ fontSize: '0.75rem', fontWeight: 500, color: '#6b7280' }}>
                       People
                     </label>
                   ) : (
@@ -555,7 +547,11 @@ export function Setup({ onComplete }: Props) {
             </div>
           </div>
 
-          {error && <p className="error" style={{ marginTop: '1rem' }}>{error}</p>}
+          {error && (
+            <p className="error" style={{ marginTop: '1rem' }}>
+              {error}
+            </p>
+          )}
 
           <div style={{ marginTop: '1rem' }}>
             <p className="muted" style={{ marginBottom: '0.75rem' }}>
@@ -581,10 +577,7 @@ export function Setup({ onComplete }: Props) {
             borderTop: '1px solid #e5e7eb',
           }}
         >
-          <button
-            className="btn btn-secondary"
-            onClick={() => setStep(STEPS[stepIndex - 1])}
-          >
+          <button className="btn btn-secondary" onClick={() => setStep(STEPS[stepIndex - 1])}>
             Back
           </button>
           {step === 'review' ? (

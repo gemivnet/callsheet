@@ -151,12 +151,19 @@ describe('logUsage', () => {
     ).toBeCloseTo(30, 5);
 
     mockWriteFileSync.mockClear();
-    // Sonnet 5: $3/M in, $15/M out.
+    // Sonnet 5: $2/M in, $10/M out (it was carried at $3/$15, overstating by half).
     usage.logUsage('/out', 'claude-sonnet-5', 'brief', 1_000_000, 1_000_000);
     const [, sonnetContent] = mockWriteFileSync.mock.calls[0] as [string, string];
     expect(
       (JSON.parse(sonnetContent) as { entries: { cost_usd: number }[] }).entries[0].cost_usd,
-    ).toBeCloseTo(18, 5);
+    ).toBeCloseTo(12, 5);
+  });
+
+  it('should price the 5.5 generation', () => {
+    expect(usage.priceCall('claude-opus-5-5', 1_000_000, 1_000_000)).toBeCloseTo(24, 5);
+    expect(usage.priceCall('claude-sonnet-5-5', 1_000_000, 1_000_000)).toBeCloseTo(12, 5);
+    expect(usage.priceCall('claude-haiku-5-5', 1_000_000, 1_000_000)).toBeCloseTo(0.6, 5);
+    expect(usage.priceCall('claude-fable-5-1', 1_000_000, 1_000_000)).toBeCloseTo(60, 5);
   });
 
   it('should estimate an unlisted model from its family rather than assuming Sonnet', () => {
@@ -320,16 +327,18 @@ describe('getUsageSummary', () => {
 
     const summary = usage.getUsageSummary('/out', '2026-03');
 
+    // Costs are re-priced from tokens, not taken from the stored cost_usd, so a
+    // corrected price table corrects history: sonnet-4 0.0105 + 0.018, opus-4 0.03.
     expect(summary.month).toBe('2026-03');
-    expect(summary.total_cost_usd).toBeCloseTo(0.08, 5);
+    expect(summary.total_cost_usd).toBeCloseTo(0.0585, 5);
     expect(summary.total_input_tokens).toBe(3500);
     expect(summary.total_output_tokens).toBe(1600);
     expect(summary.brief_count).toBe(2);
     expect(summary.total_api_calls).toBe(3);
-    expect(summary.by_model).toEqual({
-      'claude-sonnet-4-20250514': { calls: 2, cost: 0.03 },
-      'claude-opus-4-20250514': { calls: 1, cost: 0.05 },
-    });
+    expect(summary.by_model['claude-sonnet-4-20250514'].calls).toBe(2);
+    expect(summary.by_model['claude-sonnet-4-20250514'].cost).toBeCloseTo(0.0285, 5);
+    expect(summary.by_model['claude-opus-4-20250514'].calls).toBe(1);
+    expect(summary.by_model['claude-opus-4-20250514'].cost).toBeCloseTo(0.03, 5);
   });
 
   it('should return zeros for an empty month', () => {
@@ -350,11 +359,46 @@ describe('getUsageSummary', () => {
     const data = {
       month: '2026-03',
       entries: [
-        { timestamp: '', model: 'm', purpose: 'brief', input_tokens: 0, output_tokens: 0, cost_usd: 0 },
-        { timestamp: '', model: 'm', purpose: 'memory', input_tokens: 0, output_tokens: 0, cost_usd: 0 },
-        { timestamp: '', model: 'm', purpose: 'critique', input_tokens: 0, output_tokens: 0, cost_usd: 0 },
-        { timestamp: '', model: 'm', purpose: 'auto_close', input_tokens: 0, output_tokens: 0, cost_usd: 0 },
-        { timestamp: '', model: 'm', purpose: 'brief', input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+        {
+          timestamp: '',
+          model: 'm',
+          purpose: 'brief',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
+        {
+          timestamp: '',
+          model: 'm',
+          purpose: 'memory',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
+        {
+          timestamp: '',
+          model: 'm',
+          purpose: 'critique',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
+        {
+          timestamp: '',
+          model: 'm',
+          purpose: 'auto_close',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
+        {
+          timestamp: '',
+          model: 'm',
+          purpose: 'brief',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
       ],
     };
     mockExistsSync.mockReturnValue(true);
