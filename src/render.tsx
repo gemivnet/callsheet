@@ -4,6 +4,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Brief, BriefSection, BriefItem } from './types.js';
+import { todayYmd } from './dates.js';
 
 /* ------------------------------------------------------------------ */
 /*  Font registration — Lato covers the extended Latin range the brief needs */
@@ -290,8 +291,10 @@ function BriefDoc({ brief, generatedAt }: { brief: Brief; generatedAt: Date }) {
 export async function renderPdf(brief: Brief, outputDir: string): Promise<string> {
   mkdirSync(outputDir, { recursive: true });
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const pdfPath = join(outputDir, `callsheet_${today}.pdf`);
+  // The household's date, as the brief's JSON uses. The UTC date turns over in
+  // the evening west of Greenwich, so an evening re-run filed its PDF under
+  // tomorrow and the day's PDF and JSON no longer matched.
+  const pdfPath = join(outputDir, `callsheet_${todayYmd(undefined, now)}.pdf`);
 
   const buffer = await renderToBuffer(<BriefDoc brief={brief} generatedAt={now} />);
   writeFileSync(pdfPath, buffer);
