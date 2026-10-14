@@ -231,8 +231,15 @@ export function verifyFactIssues(
   brief: Brief,
   dataPayload: string,
   protectedPrefixes: string[] = [],
+  protectedHeadings: string[] = [],
 ): FactIssue[] {
-  const fields = briefFields(brief);
+  // Sections rendered by code from the data (the task coach's) are not the
+  // writer's words and are never edited.
+  const editable: Brief = {
+    ...brief,
+    sections: brief.sections.filter((s) => !protectedHeadings.includes(s.heading)),
+  };
+  const fields = briefFields(editable);
   const data = payloadText(dataPayload);
   return issues.filter((issue) => {
     const quote = typeof issue.brief_quote === 'string' ? issue.brief_quote : '';
@@ -243,7 +250,14 @@ export function verifyFactIssues(
     if (fix.length > quote.length * 2 + 60) return false;
     if (!data.includes(normaliseForQuote(evidence))) return false;
     const hits = fields.filter((f) => f.get().includes(quote));
-    if (hits.length !== 1) return false;
+    // The quote must also be unique across the whole brief, protected parts
+    // included, or the correction could land in the wrong place.
+    if (
+      hits.length !== 1 ||
+      briefFields(brief).filter((f) => f.get().includes(quote)).length !== 1
+    ) {
+      return false;
+    }
     const [hit] = hits;
     if (hit.get().split(quote).length !== 2) return false;
     return !(hit.item && isProtected(hit.item, protectedPrefixes));

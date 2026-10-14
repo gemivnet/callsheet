@@ -96,6 +96,29 @@ export interface CallsheetConfig {
   connectors?: Record<string, ConnectorConfig>;
   extras?: BriefExtra[];
   auto_close_tasks?: boolean;
+  /**
+   * Task coach: a few focus tasks per person with a time slot, a decision for
+   * each stuck task, and actions found in email or the calendar added to
+   * Todoist. Off unless `enabled: true`.
+   *
+   *   task_coach:
+   *     enabled: true
+   *     focus_per_person: 3   # focus picks per person
+   *     max_decide: 3         # stuck tasks to decide on per day
+   *     capture: true         # add detected tasks to the person's Todoist inbox
+   *     max_captures: 3
+   *     capture_label: callsheet
+   *     schedule_focus: true  # set undated, non-recurring focus picks to due today
+   */
+  task_coach?: {
+    enabled?: boolean;
+    focus_per_person?: number;
+    max_decide?: number;
+    capture?: boolean;
+    max_captures?: number;
+    capture_label?: string;
+    schedule_focus?: boolean;
+  };
   /** Per-connector deadline in milliseconds. Defaults to 60_000 (60s). */
   connector_timeout_ms?: number;
   /**
