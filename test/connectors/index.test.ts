@@ -221,3 +221,43 @@ describe('loadConnectors', () => {
     logSpy.mockRestore();
   });
 });
+
+describe('loadConnectors shared settings', () => {
+  it('passes the household timezone and roster names to every connector', async () => {
+    const todoistMock = await import('../../src/connectors/todoist.js');
+    const createFn = todoistMock.create as jest.Mock;
+    createFn.mockReset();
+    createFn.mockReturnValue({ name: 'todoist', description: 'test', fetch: jest.fn() });
+
+    const { connectors } = loadConnectors({
+      timezone: 'America/Denver',
+      household: [{ name: 'Alex' }, { name: 'Jo' }, {}],
+      connectors: { todoist: { enabled: true } },
+    });
+
+    expect(connectors).toHaveLength(1);
+    expect(createFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timezone: 'America/Denver',
+        household_names: ['Alex', 'Jo'],
+        output_dir: 'output',
+      }),
+    );
+  });
+
+  it("does not override a connector's own timezone, and omits an empty roster", async () => {
+    const todoistMock = await import('../../src/connectors/todoist.js');
+    const createFn = todoistMock.create as jest.Mock;
+    createFn.mockReset();
+    createFn.mockReturnValue({ name: 'todoist', description: 'test', fetch: jest.fn() });
+
+    loadConnectors({
+      timezone: 'America/Denver',
+      connectors: { todoist: { enabled: true, timezone: 'Europe/Paris' } },
+    });
+
+    const passed = createFn.mock.calls[0][0] as Record<string, unknown>;
+    expect(passed.timezone).toBe('Europe/Paris');
+    expect(passed).not.toHaveProperty('household_names');
+  });
+});

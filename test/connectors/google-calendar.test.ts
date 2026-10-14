@@ -31,9 +31,16 @@ jest.unstable_mockModule('googleapis', () => ({
   },
 }));
 
-const { create, validate, formatInTz, relativeDayLabel } = await import(
-  '../../src/connectors/google-calendar.js'
-);
+const {
+  create,
+  validate,
+  formatInTz,
+  relativeDayLabel,
+  attributeByTitle,
+  allDaySpan,
+  findConflicts,
+  freeWindows,
+} = await import('../../src/connectors/google-calendar.js');
 const { PASS, FAIL, INFO } = await import('../../src/test-icons.js');
 
 function setupCredsAndToken() {
@@ -442,7 +449,9 @@ describe('google-calendar connector', () => {
       );
     });
     it('labels past events within the week as "last <day>"', () => {
-      expect(relativeDayLabel('2026-04-20', '2026-04-17', 'Friday')).toBe('last Friday (3 days ago)');
+      expect(relativeDayLabel('2026-04-20', '2026-04-17', 'Friday')).toBe(
+        'last Friday (3 days ago)',
+      );
     });
   });
 
@@ -607,5 +616,168 @@ describe('google-calendar connector', () => {
 
       expect(checks.some(([icon, msg]) => icon === FAIL && msg.includes('NOT found'))).toBe(true);
     });
+  });
+});
+
+describe('attributeByTitle', () => {
+  const names = ['Alex', 'Sam', 'Jo'];
+
+  it("gives a member's prefixed event to that member, keeping whose calendar it is on", () => {
+    expect(attributeByTitle('Jo: Practice', ['Alex'], names)).toEqual({
+      people: ['Jo'],
+      onCalendarOf: ['Alex'],
+    });
+    expect(attributeByTitle('sam in plane with coach', ['Alex'], names)).toEqual({
+      people: ['Sam'],
+      onCalendarOf: ['Alex'],
+    });
+  });
+
+  it("leaves an owner's own event, an unprefixed event, and a mere substring alone", () => {
+    expect(attributeByTitle('Alex: dentist', ['Alex'], names)).toEqual({ people: ['Alex'] });
+    expect(attributeByTitle('Dinner', ['Alex'], names)).toEqual({ people: ['Alex'] });
+    expect(attributeByTitle('Joint session', ['Alex'], names)).toEqual({ people: ['Alex'] });
+    expect(attributeByTitle('Jo: x', undefined, [])).toEqual({ people: undefined });
+  });
+});
+
+describe('allDaySpan', () => {
+  it('turns an exclusive end date into the real last day', () => {
+    expect(allDaySpan('2026-10-02', '2026-10-05', '2026-09-28')).toEqual({
+      lastDay: '2026-10-04',
+      spanDays: 3,
+      spanLabel: 'Fri 2026-10-02 – Sun 2026-10-04 (3 days)',
+    });
+  });
+
+  it('says which day of the span today is', () => {
+    expect(allDaySpan('2026-10-02', '2026-10-05', '2026-10-03')).toMatchObject({
+      ongoing: true,
+      dayOfSpan: 'day 2 of 3',
+    });
+    expect(allDaySpan('2026-10-02', '2026-10-05', '2026-10-02')).toMatchObject({
+      ongoing: false,
+      dayOfSpan: 'day 1 of 3',
+    });
+  });
+
+  it('treats a one-day event (or a malformed end) as one day', () => {
+    expect(allDaySpan('2026-10-02', '2026-10-03', '2026-10-02')).toEqual({
+      lastDay: '2026-10-02',
+      spanDays: 1,
+    });
+    expect(allDaySpan('2026-10-02', '2026-10-02', '2026-10-02').spanDays).toBe(1);
+  });
+});
+
+describe('findConflicts and freeWindows', () => {
+  const at = (h: number, m = 0) => Date.UTC(2026, 9, 14, h, m);
+  const slot = (summary: string, people: string[], from: number, to: number) => ({
+    summary,
+    people,
+    startMs: from,
+    endMs: to,
+    date: '2026-10-14',
+    timeLabel: `${new Date(from).getUTCHours()}:00`,
+    endTimeLabel: `${new Date(to).getUTCHours()}:00`,
+  });
+
+  it("reports one person's overlapping events, not two people's", () => {
+    const conflicts = findConflicts([
+      slot('Office', ['Alex'], at(7), at(14)),
+      slot('Appointment', ['Alex'], at(10), at(11)),
+      slot('Practice', ['Jo'], at(10), at(12)),
+      slot('Back to back', ['Alex'], at(14), at(15)),
+    ]);
+    expect(conflicts).toEqual([
+      {
+        person: 'Alex',
+        date: '2026-10-14',
+        first: 'Office 7:00–14:00',
+        second: 'Appointment 10:00–11:00',
+        overlapMinutes: 60,
+      },
+    ]);
+  });
+
+  it("lists each person's open stretches, skipping short gaps and the past", () => {
+    const slots = [
+      slot('Office', ['Alex'], at(8), at(12)),
+      slot('Call', ['Alex'], at(12, 30), at(13)),
+      slot('Gym', ['Sam'], at(9), at(10)),
+    ];
+    const windows = freeWindows(slots, ['Alex', 'Sam', 'Jo'], at(8), at(18), 'UTC', 45);
+    expect(windows).toEqual({
+      Alex: ['1:00 PM–6:00 PM'],
+      Sam: ['8:00 AM–9:00 AM', '10:00 AM–6:00 PM'],
+      Jo: ['8:00 AM–6:00 PM'],
+    });
+    expect(freeWindows(slots, ['Jo'], at(8), at(18), 'UTC', 45, at(17, 30))).toEqual({ Jo: [] });
+  });
+});
+
+describe('calendar connector: roster, spans, exclusions, conflicts', () => {
+  it('attributes, spans, excludes and computes conflicts and free time end to end', async () => {
+    setupCredsAndToken();
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date());
+    const iso = (h: number) => `${today}T${String(h).padStart(2, '0')}:00:00Z`;
+    mockEventsList.mockImplementation((args: unknown) => {
+      const { timeMin } = args as { timeMin: string };
+      // Only the "today" query returns events.
+      if (!timeMin.startsWith(today)) return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({
+        data: {
+          items: [
+            {
+              id: 'a',
+              summary: 'Office',
+              start: { dateTime: iso(13) },
+              end: { dateTime: iso(19) },
+            },
+            { id: 'b', summary: 'Call', start: { dateTime: iso(15) }, end: { dateTime: iso(16) } },
+            {
+              id: 'c',
+              summary: 'Jo: Practice',
+              start: { dateTime: iso(15) },
+              end: { dateTime: iso(16) },
+            },
+            {
+              id: 'd',
+              summary: 'Team at home',
+              description: 'not attending (schedule reference)',
+              start: { dateTime: iso(20) },
+              end: { dateTime: iso(22) },
+            },
+            {
+              id: 'e',
+              summary: 'Long weekend',
+              start: { date: today },
+              end: { date: '2099-01-03' },
+            },
+          ],
+        },
+      });
+    });
+
+    const result = await create({
+      enabled: true,
+      timezone: 'UTC',
+      lookback_days: 0,
+      household_names: ['Alex', 'Jo'],
+      exclude_patterns: ['schedule reference', '[unclosed'],
+      accounts: [{ name: 'Alex', calendar_ids: ['primary'] }],
+    }).fetch();
+
+    const todayEvents = result.data.today as Record<string, unknown>[];
+    expect(todayEvents.map((e) => e.summary)).not.toContain('Team at home');
+    expect(result.data.omitted_reference_events).toBe(1);
+    expect(result.description).toContain('reference-only event(s) were left out');
+    const practice = todayEvents.find((e) => e.summary === 'Jo: Practice');
+    expect(practice).toMatchObject({ people: ['Jo'], onCalendarOf: ['Alex'] });
+    expect(todayEvents.find((e) => e.summary === 'Long weekend')).toHaveProperty('lastDay');
+    const conflicts = result.data.conflicts as { person: string }[];
+    expect(conflicts.map((c) => c.person)).toEqual(['Alex']);
+    const free = result.data.free_time_today as Record<string, string[]>;
+    expect(Object.keys(free)).toEqual(['Alex', 'Jo']);
   });
 });
