@@ -18,6 +18,7 @@ const mockMessagesList = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const mockMessagesGet = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const mockLabelsList = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const mockLabelsGet = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const mockThreadsGet = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 
 jest.unstable_mockModule('googleapis', () => ({
   google: {
@@ -38,12 +39,16 @@ jest.unstable_mockModule('googleapis', () => ({
           list: mockLabelsList,
           get: mockLabelsGet,
         },
+        threads: {
+          get: mockThreadsGet,
+        },
       },
     })),
   },
 }));
 
-const { create, validate } = await import('../../src/connectors/gmail.js');
+const { create, validate, decodeEntities, redactCodes } =
+  await import('../../src/connectors/gmail.js');
 const { PASS, FAIL, INFO } = await import('../../src/test-icons.js');
 
 function setupCredsAndToken() {
@@ -60,7 +65,14 @@ function setupCredsAndToken() {
 }
 
 function setupGmailMocks(
-  messages: { id: string; from?: string; subject?: string; date?: string; snippet?: string; labelIds?: string[] }[] = [],
+  messages: {
+    id: string;
+    from?: string;
+    subject?: string;
+    date?: string;
+    snippet?: string;
+    labelIds?: string[];
+  }[] = [],
   labels: { id: string; name: string; type?: string }[] = [],
   unreadCount = 0,
 ) {
@@ -261,11 +273,7 @@ describe('gmail connector', () => {
 
     it('should include description with account/email/unread counts', async () => {
       setupCredsAndToken();
-      setupGmailMocks(
-        [{ id: 'msg5', labelIds: ['INBOX'] }],
-        [],
-        3,
-      );
+      setupGmailMocks([{ id: 'msg5', labelIds: ['INBOX'] }], [], 3);
 
       const conn = create({ enabled: true });
       const result = await conn.fetch();
@@ -306,11 +314,7 @@ describe('gmail connector', () => {
 
     it('should skip pinned labels that do not exist for the account', async () => {
       setupCredsAndToken();
-      setupGmailMocks(
-        [],
-        [{ id: 'INBOX', name: 'INBOX', type: 'system' }],
-        0,
-      );
+      setupGmailMocks([], [{ id: 'INBOX', name: 'INBOX', type: 'system' }], 0);
 
       const conn = create({
         enabled: true,
@@ -393,5 +397,99 @@ describe('gmail connector', () => {
       expect(checks.some(([icon, msg]) => icon === INFO && msg.includes('3d'))).toBe(true);
       expect(checks.some(([icon, msg]) => icon === INFO && msg.includes('Travel'))).toBe(true);
     });
+  });
+});
+
+describe('decodeEntities', () => {
+  it('decodes the entities Gmail leaves in snippets', () => {
+    expect(
+      decodeEntities('We&#39;ve &quot;got&quot; &lt;it&gt; &amp; more&nbsp;&#x41;&apos;'),
+    ).toBe('We\'ve "got" <it> & more A\'');
+  });
+});
+
+describe('redactCodes', () => {
+  it('removes codes from text that talks about codes', () => {
+    expect(redactCodes('Your verification code is 482913. It expires in 10 minutes.')).toBe(
+      'Your verification code is [code]. It expires in 10 minutes.',
+    );
+    expect(redactCodes('Use G-482913 to sign in')).toBe('Use [code] to sign in');
+    expect(redactCodes('Your one-time passcode: K7Q2ZP')).toBe('Your one-time passcode: [code]');
+  });
+
+  it('leaves ordinary numbers in ordinary emails alone', () => {
+    expect(redactCodes('Order 12345678 has shipped')).toBe('Order 12345678 has shipped');
+    expect(redactCodes('Your code review is ready')).toBe('Your code review is ready');
+  });
+});
+
+describe('gmail threads, local times and truncation', () => {
+  it('annotates who spoke last, adds local times, redacts and flags a cut-off window', async () => {
+    setupCredsAndToken();
+    mockLabelsList.mockResolvedValue({ data: { labels: [] } });
+    mockLabelsGet.mockResolvedValue({ data: { messagesUnread: 1 } });
+    mockMessagesList.mockImplementation(async (opts: unknown) => {
+      const { q } = opts as { q: string };
+      if (q.startsWith('in:trash')) return { data: { messages: [] } };
+      return { data: { messages: [{ id: 'm1' }, { id: 'm2' }], nextPageToken: 'more' } };
+    });
+    mockMessagesGet.mockImplementation(async (opts: unknown) => {
+      const { id } = opts as { id: string };
+      return {
+        data: {
+          threadId: id === 'm1' ? 't1' : 't2',
+          internalDate: String(Date.UTC(2026, 9, 14, 15, 30)),
+          payload: {
+            headers: [
+              { name: 'From', value: 'Friend <friend@example.com>' },
+              { name: 'To', value: 'test@example.com' },
+              { name: 'Subject', value: id === 'm1' ? 'Dinner Friday?' : 'Your login code' },
+              { name: 'Date', value: 'Wed, 14 Oct 2026 15:30:00 +0000' },
+            ],
+          },
+          snippet: id === 'm1' ? 'Can you make it?' : 'Use 482913 to sign in &amp; continue',
+          labelIds: id === 'm1' ? ['INBOX'] : ['INBOX', 'UNREAD'],
+        },
+      };
+    });
+    mockThreadsGet.mockImplementation(async (opts: unknown) => {
+      const { id } = opts as { id: string };
+      if (id === 't2') throw new Error('gone');
+      return {
+        data: {
+          messages: [
+            { internalDate: '2', labelIds: ['SENT'] },
+            { internalDate: '1', labelIds: ['INBOX'] },
+          ],
+        },
+      };
+    });
+
+    const result = await create({
+      enabled: true,
+      timezone: 'America/New_York',
+      max_messages: 2,
+      accounts: [{ name: 'Person1' }],
+    }).fetch();
+
+    const [acct] = result.data.accounts as {
+      emails: Record<string, unknown>[];
+      truncated?: boolean;
+    }[];
+    const [dinner, login] = acct.emails;
+    expect(dinner).toMatchObject({
+      to: 'test@example.com',
+      dateLocal: '2026-10-14',
+      timeLabel: '11:30 AM',
+      sent: false,
+      threadId: 't1',
+      threadMessages: 2,
+      lastFromUs: true,
+    });
+    expect(login.snippet).toBe('Use [code] to sign in & continue');
+    expect(login).not.toHaveProperty('lastFromUs');
+    expect(acct.truncated).toBe(true);
+    expect(result.description).toContain('The window was CUT OFF for Person1');
+    expect(result.description).toContain('lastFromUs: true');
   });
 });
