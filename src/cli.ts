@@ -170,7 +170,8 @@ async function main() {
     console.log(`On vacation (${todayInTz()}), skipping. Use --force to override.`);
     return;
   }
-  await runPipeline(config, { preview: opts.preview });
+  const result = await runPipeline(config, { preview: opts.preview, trigger: 'manual' });
+  if (!result.generated || result.print.outcome === 'failed') process.exitCode = 1;
 }
 
 main().catch((e) => {

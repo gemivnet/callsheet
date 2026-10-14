@@ -9,13 +9,24 @@ const mockReadFileSync = jest.fn<(p: string, enc?: string) => string>().mockRetu
 const mockReaddirSync = jest.fn<(p: string) => string[]>().mockReturnValue([]);
 const mockWriteFileSync = jest.fn();
 const mockUnlinkSync = jest.fn();
+const mockMkdirSync = jest.fn();
+const mockRenameSync = jest.fn();
 
 const mockLoadConfig = jest.fn();
 const mockRunPipeline = jest.fn();
 const mockGetRegistry = jest.fn().mockReturnValue(new Map());
 const mockIsGenerating = jest.fn().mockReturnValue(false);
 const mockGetMonthlyUsageData = jest.fn().mockReturnValue({ month: '2026-03', entries: [] });
-const mockGetUsageSummary = jest.fn().mockReturnValue({ total_cost: 0, total_input_tokens: 0, total_output_tokens: 0, brief_count: 0, api_calls: 0, by_model: {} });
+const mockGetUsageSummary = jest
+  .fn()
+  .mockReturnValue({
+    total_cost: 0,
+    total_input_tokens: 0,
+    total_output_tokens: 0,
+    brief_count: 0,
+    api_calls: 0,
+    by_model: {},
+  });
 const mockBuildAuthUrl = jest.fn();
 const mockExchangeCodeAndSave = jest.fn();
 const mockResolveCredsFile = jest.fn().mockReturnValue(undefined);
@@ -29,12 +40,16 @@ jest.unstable_mockModule('node:fs', () => ({
   existsSync: mockExistsSync,
   writeFileSync: mockWriteFileSync,
   unlinkSync: mockUnlinkSync,
+  mkdirSync: mockMkdirSync,
+  renameSync: mockRenameSync,
   default: {
     readFileSync: mockReadFileSync,
     readdirSync: mockReaddirSync,
     existsSync: mockExistsSync,
     writeFileSync: mockWriteFileSync,
     unlinkSync: mockUnlinkSync,
+    mkdirSync: mockMkdirSync,
+    renameSync: mockRenameSync,
   },
 }));
 
@@ -79,18 +94,33 @@ const { createApp } = await import('../src/server.js');
 
 type ResponseData = { status: number; headers: Record<string, string>; body: string };
 
-function request(server: Server, method: string, path: string, body?: unknown): Promise<ResponseData> {
+function request(
+  server: Server,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<ResponseData> {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     if (!addr || typeof addr === 'string') return reject(new Error('No address'));
     const payload = body ? JSON.stringify(body) : undefined;
     const req = http.request(
-      { hostname: '127.0.0.1', port: addr.port, path, method, headers: { 'Content-Type': 'application/json' } },
+      {
+        hostname: '127.0.0.1',
+        port: addr.port,
+        path,
+        method,
+        headers: { 'Content-Type': 'application/json' },
+      },
       (res: IncomingMessage) => {
         let data = '';
         res.on('data', (chunk: Buffer) => (data += chunk.toString()));
         res.on('end', () =>
-          resolve({ status: res.statusCode ?? 0, headers: res.headers as Record<string, string>, body: data }),
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: res.headers as Record<string, string>,
+            body: data,
+          }),
         );
       },
     );
@@ -124,6 +154,23 @@ beforeEach(() => {
   mockIsGenerating.mockReturnValue(false);
 });
 
+/** Serve a status.json from the mocked filesystem. */
+function withStatusFile(status: unknown) {
+  mockExistsSync.mockImplementation((p: string) => String(p).endsWith('status.json'));
+  mockReadFileSync.mockImplementation((p: string) =>
+    String(p).endsWith('status.json') ? JSON.stringify(status) : '',
+  );
+}
+
+const scheduledRun = (over: Record<string, unknown> = {}) => ({
+  date: '2026-10-14',
+  trigger: 'scheduled',
+  startedAt: '2026-10-14T09:00:00Z',
+  generated: true,
+  print: 'printed',
+  ...over,
+});
+
 describe('GET /api/health', () => {
   it('returns status ok', async () => {
     const res = await request(server, 'GET', '/api/health');
@@ -132,6 +179,16 @@ describe('GET /api/health', () => {
     expect(data.status).toBe('ok');
     expect(data).toHaveProperty('uptime_seconds');
     expect(data).toHaveProperty('started_at');
+    expect(data.last_run).toBeNull();
+  });
+
+  it('stays 200 after a failed run, and reports it', async () => {
+    withStatusFile({ last: scheduledRun({ print: 'failed' }) });
+    const res = await request(server, 'GET', '/api/health');
+    const data = json(res) as { last_run: { print: string } };
+    // Liveness only — a delivery failure must not mark the container unhealthy.
+    expect(res.status).toBe(200);
+    expect(data.last_run.print).toBe('failed');
   });
 });
 
@@ -417,7 +474,9 @@ describe('GET /api/logs', () => {
 
   it('returns 500 when readFileSync throws', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockImplementation(() => { throw new Error('read error'); });
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('read error');
+    });
     const res = await request(server, 'GET', '/api/logs');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -429,7 +488,9 @@ describe('GET /api/logs', () => {
 
 describe('POST /api/setup error path', () => {
   it('returns 500 when writeFileSync throws', async () => {
-    mockWriteFileSync.mockImplementation(() => { throw new Error('disk full'); });
+    mockWriteFileSync.mockImplementation(() => {
+      throw new Error('disk full');
+    });
     const res = await request(server, 'POST', '/api/setup', { model: 'test' });
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -447,9 +508,7 @@ describe('POST /api/setup with existing .env', () => {
     });
     expect(res.status).toBe(200);
     // writeFileSync called once for config.yaml, but NOT for .env since key already exists
-    const envWriteCalls = mockWriteFileSync.mock.calls.filter(
-      (c: unknown[]) => c[0] === '.env',
-    );
+    const envWriteCalls = mockWriteFileSync.mock.calls.filter((c: unknown[]) => c[0] === '.env');
     expect(envWriteCalls).toHaveLength(0);
   });
 });
@@ -469,7 +528,9 @@ describe('GET /api/briefs parse error', () => {
 describe('GET /api/briefs/:date read error', () => {
   it('returns 500 when readFileSync throws', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockImplementation(() => { throw new Error('read fail'); });
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('read fail');
+    });
     const res = await request(server, 'GET', '/api/briefs/2026-03-27');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -479,7 +540,9 @@ describe('GET /api/briefs/:date read error', () => {
 
 describe('GET /api/connectors error', () => {
   it('returns 500 when loadConfig throws', async () => {
-    mockLoadConfig.mockImplementation(() => { throw new Error('bad config'); });
+    mockLoadConfig.mockImplementation(() => {
+      throw new Error('bad config');
+    });
     const res = await request(server, 'GET', '/api/connectors');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -499,7 +562,15 @@ describe('POST /api/connectors/:name/test', () => {
 
   it('returns 500 when validate throws', async () => {
     const registry = new Map([
-      ['weather', { factory: jest.fn(), validate: () => { throw new Error('validate boom'); } }],
+      [
+        'weather',
+        {
+          factory: jest.fn(),
+          validate: () => {
+            throw new Error('validate boom');
+          },
+        },
+      ],
     ]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { weather: { enabled: true } } });
@@ -512,9 +583,7 @@ describe('POST /api/connectors/:name/test', () => {
 
 describe('GET /api/connectors/:name accounts', () => {
   it('returns account names when connector has accounts array', async () => {
-    const registry = new Map([
-      ['calendar', { factory: jest.fn(), validate: () => [] }],
-    ]);
+    const registry = new Map([['calendar', { factory: jest.fn(), validate: () => [] }]]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({
       connectors: {
@@ -533,7 +602,9 @@ describe('GET /api/connectors/:name accounts', () => {
 
 describe('GET /api/connectors/:name error', () => {
   it('returns 500 when loadConfig throws', async () => {
-    mockLoadConfig.mockImplementation(() => { throw new Error('config error'); });
+    mockLoadConfig.mockImplementation(() => {
+      throw new Error('config error');
+    });
     const res = await request(server, 'GET', '/api/connectors/calendar');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -544,11 +615,14 @@ describe('GET /api/connectors/:name error', () => {
 describe('POST /api/connectors/:name/auth', () => {
   it('returns auth_url for OAuth-capable connector', async () => {
     const registry = new Map([
-      ['calendar', {
-        factory: jest.fn(),
-        authScopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-        authTokenPrefix: 'gcal_token',
-      }],
+      [
+        'calendar',
+        {
+          factory: jest.fn(),
+          authScopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+          authTokenPrefix: 'gcal_token',
+        },
+      ],
     ]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({
@@ -571,11 +645,14 @@ describe('POST /api/connectors/:name/auth', () => {
 
   it('returns auth_url with account name', async () => {
     const registry = new Map([
-      ['calendar', {
-        factory: jest.fn(),
-        authScopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-        authTokenPrefix: 'gcal_token',
-      }],
+      [
+        'calendar',
+        {
+          factory: jest.fn(),
+          authScopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+          authTokenPrefix: 'gcal_token',
+        },
+      ],
     ]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({
@@ -608,9 +685,7 @@ describe('POST /api/connectors/:name/auth', () => {
   });
 
   it('returns 400 when connector does not support web auth', async () => {
-    const registry = new Map([
-      ['weather', { factory: jest.fn() }],
-    ]);
+    const registry = new Map([['weather', { factory: jest.fn() }]]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { weather: { enabled: true } } });
     const res = await request(server, 'POST', '/api/connectors/weather/auth');
@@ -621,15 +696,20 @@ describe('POST /api/connectors/:name/auth', () => {
 
   it('returns 500 when buildAuthUrl throws', async () => {
     const registry = new Map([
-      ['calendar', {
-        factory: jest.fn(),
-        authScopes: ['scope'],
-        authTokenPrefix: 'gcal_token',
-      }],
+      [
+        'calendar',
+        {
+          factory: jest.fn(),
+          authScopes: ['scope'],
+          authTokenPrefix: 'gcal_token',
+        },
+      ],
     ]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { calendar: { enabled: true } } });
-    mockBuildAuthUrl.mockImplementation(() => { throw new Error('creds missing'); });
+    mockBuildAuthUrl.mockImplementation(() => {
+      throw new Error('creds missing');
+    });
     const res = await request(server, 'POST', '/api/connectors/calendar/auth');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -653,11 +733,14 @@ describe('GET /oauth2callback', () => {
   it('completes OAuth flow successfully', async () => {
     // First, initiate an auth flow to populate pendingOAuth
     const registry = new Map([
-      ['calendar', {
-        factory: jest.fn(),
-        authScopes: ['scope'],
-        authTokenPrefix: 'gcal_token',
-      }],
+      [
+        'calendar',
+        {
+          factory: jest.fn(),
+          authScopes: ['scope'],
+          authTokenPrefix: 'gcal_token',
+        },
+      ],
     ]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { calendar: { enabled: true } } });
@@ -675,20 +758,31 @@ describe('GET /oauth2callback', () => {
 
     // Now call the callback
     mockExchangeCodeAndSave.mockResolvedValue(undefined);
-    const res = await request(server, 'GET', '/oauth2callback?code=auth-code-xyz&state=oauth-state-123');
+    const res = await request(
+      server,
+      'GET',
+      '/oauth2callback?code=auth-code-xyz&state=oauth-state-123',
+    );
     expect(res.status).toBe(200);
     expect(res.body).toContain('Authorization complete');
-    expect(mockExchangeCodeAndSave).toHaveBeenCalledWith(fakeOAuth2, 'auth-code-xyz', '/tmp/token.json');
+    expect(mockExchangeCodeAndSave).toHaveBeenCalledWith(
+      fakeOAuth2,
+      'auth-code-xyz',
+      '/tmp/token.json',
+    );
   });
 
   it('returns 500 when exchangeCodeAndSave throws', async () => {
     // Initiate auth flow
     const registry = new Map([
-      ['calendar', {
-        factory: jest.fn(),
-        authScopes: ['scope'],
-        authTokenPrefix: 'gcal_token',
-      }],
+      [
+        'calendar',
+        {
+          factory: jest.fn(),
+          authScopes: ['scope'],
+          authTokenPrefix: 'gcal_token',
+        },
+      ],
     ]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { calendar: { enabled: true } } });
@@ -703,7 +797,11 @@ describe('GET /oauth2callback', () => {
     await request(server, 'POST', '/api/connectors/calendar/auth');
 
     mockExchangeCodeAndSave.mockRejectedValue(new Error('token exchange failed'));
-    const res = await request(server, 'GET', '/oauth2callback?code=bad-code&state=oauth-state-fail');
+    const res = await request(
+      server,
+      'GET',
+      '/oauth2callback?code=bad-code&state=oauth-state-fail',
+    );
     expect(res.status).toBe(500);
     expect(res.body).toContain('token exchange failed');
   });
@@ -711,7 +809,9 @@ describe('GET /oauth2callback', () => {
 
 describe('GET /api/config error', () => {
   it('returns 500 when readFileSync throws', async () => {
-    mockReadFileSync.mockImplementation(() => { throw new Error('no config file'); });
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('no config file');
+    });
     const res = await request(server, 'GET', '/api/config');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -721,7 +821,9 @@ describe('GET /api/config error', () => {
 
 describe('PUT /api/config error', () => {
   it('returns 500 when writeFileSync throws', async () => {
-    mockWriteFileSync.mockImplementation(() => { throw new Error('write denied'); });
+    mockWriteFileSync.mockImplementation(() => {
+      throw new Error('write denied');
+    });
     const res = await request(server, 'PUT', '/api/config', { model: 'test' });
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -745,7 +847,9 @@ describe('GET /api/memory parse error', () => {
 describe('GET /api/memory readdir error', () => {
   it('returns empty array when readdirSync throws', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockImplementation(() => { throw new Error('EACCES'); });
+    mockReaddirSync.mockImplementation(() => {
+      throw new Error('EACCES');
+    });
     const res = await request(server, 'GET', '/api/memory');
     const data = json(res) as { memories: unknown[] };
     expect(data.memories).toEqual([]);
@@ -755,7 +859,9 @@ describe('GET /api/memory readdir error', () => {
 describe('DELETE /api/memory error', () => {
   it('returns 500 when unlinkSync throws', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockUnlinkSync.mockImplementation(() => { throw new Error('permission denied'); });
+    mockUnlinkSync.mockImplementation(() => {
+      throw new Error('permission denied');
+    });
     const res = await request(server, 'DELETE', '/api/memory/2026-03-27');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -765,7 +871,9 @@ describe('DELETE /api/memory error', () => {
 
 describe('GET /api/usage error', () => {
   it('returns 500 when getUsageSummary throws', async () => {
-    mockGetUsageSummary.mockImplementation(() => { throw new Error('usage error'); });
+    mockGetUsageSummary.mockImplementation(() => {
+      throw new Error('usage error');
+    });
     const res = await request(server, 'GET', '/api/usage');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -775,7 +883,9 @@ describe('GET /api/usage error', () => {
 
 describe('GET /api/usage/history error', () => {
   it('returns 500 when getMonthlyUsageData throws', async () => {
-    mockGetMonthlyUsageData.mockImplementation(() => { throw new Error('history error'); });
+    mockGetMonthlyUsageData.mockImplementation(() => {
+      throw new Error('history error');
+    });
     const res = await request(server, 'GET', '/api/usage/history');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -796,7 +906,9 @@ describe('SPA fallback', () => {
 
 describe('branch: non-Error exceptions', () => {
   it('POST /api/setup handles non-Error throw', async () => {
-    mockWriteFileSync.mockImplementation(() => { throw 'string error'; });
+    mockWriteFileSync.mockImplementation(() => {
+      throw 'string error';
+    });
     const res = await request(server, 'POST', '/api/setup', { model: 'test' });
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -804,7 +916,9 @@ describe('branch: non-Error exceptions', () => {
   });
 
   it('GET /api/connectors handles non-Error throw', async () => {
-    mockLoadConfig.mockImplementation(() => { throw 42; });
+    mockLoadConfig.mockImplementation(() => {
+      throw 42;
+    });
     const res = await request(server, 'GET', '/api/connectors');
     expect(res.status).toBe(500);
     const data = json(res) as { error: string };
@@ -812,57 +926,75 @@ describe('branch: non-Error exceptions', () => {
   });
 
   it('POST /api/connectors/:name/test handles non-Error throw', async () => {
-    mockLoadConfig.mockImplementation(() => { throw null; });
+    mockLoadConfig.mockImplementation(() => {
+      throw null;
+    });
     const res = await request(server, 'POST', '/api/connectors/x/test');
     expect(res.status).toBe(500);
   });
 
   it('GET /api/connectors/:name handles non-Error throw', async () => {
-    mockLoadConfig.mockImplementation(() => { throw 'oops'; });
+    mockLoadConfig.mockImplementation(() => {
+      throw 'oops';
+    });
     const res = await request(server, 'GET', '/api/connectors/x');
     expect(res.status).toBe(500);
   });
 
   it('POST /api/connectors/:name/auth handles non-Error throw', async () => {
-    mockLoadConfig.mockImplementation(() => { throw 'auth fail'; });
+    mockLoadConfig.mockImplementation(() => {
+      throw 'auth fail';
+    });
     const res = await request(server, 'POST', '/api/connectors/calendar/auth');
     expect(res.status).toBe(500);
   });
 
   it('GET /api/config handles non-Error throw', async () => {
-    mockReadFileSync.mockImplementation(() => { throw 'no file'; });
+    mockReadFileSync.mockImplementation(() => {
+      throw 'no file';
+    });
     const res = await request(server, 'GET', '/api/config');
     expect(res.status).toBe(500);
   });
 
   it('PUT /api/config handles non-Error throw', async () => {
-    mockWriteFileSync.mockImplementation(() => { throw 'denied'; });
+    mockWriteFileSync.mockImplementation(() => {
+      throw 'denied';
+    });
     const res = await request(server, 'PUT', '/api/config', {});
     expect(res.status).toBe(500);
   });
 
   it('DELETE /api/memory handles non-Error throw', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockUnlinkSync.mockImplementation(() => { throw 'rm fail'; });
+    mockUnlinkSync.mockImplementation(() => {
+      throw 'rm fail';
+    });
     const res = await request(server, 'DELETE', '/api/memory/2026-03-27');
     expect(res.status).toBe(500);
   });
 
   it('GET /api/usage handles non-Error throw', async () => {
-    mockGetUsageSummary.mockImplementation(() => { throw 'bad'; });
+    mockGetUsageSummary.mockImplementation(() => {
+      throw 'bad';
+    });
     const res = await request(server, 'GET', '/api/usage');
     expect(res.status).toBe(500);
   });
 
   it('GET /api/usage/history handles non-Error throw', async () => {
-    mockGetMonthlyUsageData.mockImplementation(() => { throw 'bad'; });
+    mockGetMonthlyUsageData.mockImplementation(() => {
+      throw 'bad';
+    });
     const res = await request(server, 'GET', '/api/usage/history');
     expect(res.status).toBe(500);
   });
 
   it('GET /api/logs handles non-Error throw', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockImplementation(() => { throw 'log fail'; });
+    mockReadFileSync.mockImplementation(() => {
+      throw 'log fail';
+    });
     const res = await request(server, 'GET', '/api/logs');
     expect(res.status).toBe(500);
   });
@@ -876,7 +1008,11 @@ describe('branch: non-Error exceptions', () => {
     mockLoadConfig.mockReturnValue({ connectors: { calendar: { enabled: true } } });
     mockResolveCredsFile.mockReturnValue(undefined);
     mockRandomUUID.mockReturnValue('non-error-state');
-    mockBuildAuthUrl.mockReturnValue({ authUrl: 'https://x.com/auth', oauth2: {}, tokenPath: '/t.json' });
+    mockBuildAuthUrl.mockReturnValue({
+      authUrl: 'https://x.com/auth',
+      oauth2: {},
+      tokenPath: '/t.json',
+    });
     await request(server, 'POST', '/api/connectors/calendar/auth');
 
     mockExchangeCodeAndSave.mockRejectedValue('string rejection');
@@ -913,9 +1049,7 @@ describe('branch: query parameter variations', () => {
 
 describe('branch: connector without validate', () => {
   it('POST /api/connectors/:name/test returns empty checks for connector without validate', async () => {
-    const registry = new Map([
-      ['simple', { factory: jest.fn() }],
-    ]);
+    const registry = new Map([['simple', { factory: jest.fn() }]]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { simple: { enabled: true } } });
     const res = await request(server, 'POST', '/api/connectors/simple/test');
@@ -925,9 +1059,7 @@ describe('branch: connector without validate', () => {
   });
 
   it('GET /api/connectors/:name returns empty checks for connector without validate', async () => {
-    const registry = new Map([
-      ['simple', { factory: jest.fn() }],
-    ]);
+    const registry = new Map([['simple', { factory: jest.fn() }]]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { simple: { enabled: true } } });
     const res = await request(server, 'GET', '/api/connectors/simple');
@@ -939,9 +1071,7 @@ describe('branch: connector without validate', () => {
 
 describe('branch: connector disabled / undefined', () => {
   it('GET /api/connectors shows connector as disabled when not in config', async () => {
-    const registry = new Map([
-      ['weather', { factory: jest.fn() }],
-    ]);
+    const registry = new Map([['weather', { factory: jest.fn() }]]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: {} });
     const res = await request(server, 'GET', '/api/connectors');
@@ -950,9 +1080,7 @@ describe('branch: connector disabled / undefined', () => {
   });
 
   it('GET /api/connectors shows connector as disabled when enabled: false', async () => {
-    const registry = new Map([
-      ['weather', { factory: jest.fn() }],
-    ]);
+    const registry = new Map([['weather', { factory: jest.fn() }]]);
     mockGetRegistry.mockReturnValue(registry);
     mockLoadConfig.mockReturnValue({ connectors: { weather: { enabled: false } } });
     const res = await request(server, 'GET', '/api/connectors');
@@ -964,7 +1092,9 @@ describe('branch: connector disabled / undefined', () => {
 describe('branch: brief subtitle', () => {
   it('GET /api/briefs returns subtitle when present', async () => {
     mockReaddirSync.mockReturnValue(['callsheet_2026-03-27.json']);
-    mockReadFileSync.mockReturnValue(JSON.stringify({ title: 'Brief', subtitle: 'Friday', sections: [] }));
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ title: 'Brief', subtitle: 'Friday', sections: [] }),
+    );
     const res = await request(server, 'GET', '/api/briefs');
     const data = json(res) as { briefs: Array<{ subtitle: string | null }> };
     expect(data.briefs[0].subtitle).toBe('Friday');

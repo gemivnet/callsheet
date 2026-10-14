@@ -1,6 +1,7 @@
 import cron, { type ScheduledTask } from 'node-cron';
 import { loadConfig, runPipeline } from './core.js';
 import type { CallsheetConfig } from './types.js';
+import type { RunTrigger } from './status.js';
 
 let running = false;
 
@@ -37,7 +38,10 @@ export function isOnVacation(config: CallsheetConfig, today: string = todayInTz(
  * Run a single brief generation cycle.
  * Includes a mutex to prevent concurrent runs (e.g. scheduler + API trigger).
  */
-export async function runGeneration(configPath: string): Promise<void> {
+export async function runGeneration(
+  configPath: string,
+  trigger: RunTrigger = 'scheduled',
+): Promise<void> {
   if (running) {
     console.log('[scheduler] Generation already in progress, skipping.');
     return;
@@ -45,7 +49,7 @@ export async function runGeneration(configPath: string): Promise<void> {
 
   running = true;
   const startTime = Date.now();
-  console.log(`[scheduler] Starting generation at ${new Date().toISOString()}`);
+  console.log(`[scheduler] Starting ${trigger} generation at ${new Date().toISOString()}`);
 
   try {
     const config = loadConfig(configPath);
@@ -57,11 +61,15 @@ export async function runGeneration(configPath: string): Promise<void> {
     // host cron. Set PRINT_BRIEF=false (e.g. UI-only deployments) to generate
     // the PDF and dashboard artifacts without sending a print job.
     const preview = process.env.PRINT_BRIEF === 'false';
-    await runPipeline(config, { preview });
+    const result = await runPipeline(config, { preview, trigger });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[scheduler] Generation complete in ${elapsed}s`);
+    console.log(
+      `[scheduler] Run complete in ${elapsed}s — brief: ${
+        result.generated ? 'written' : 'ERROR PAGE'
+      }, print: ${result.print.outcome}${result.print.detail ? ` (${result.print.detail})` : ''}`,
+    );
   } catch (e) {
-    console.error(`[scheduler] Generation failed:`, e);
+    console.error(`[scheduler] Run failed:`, e);
   } finally {
     running = false;
   }

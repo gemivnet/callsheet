@@ -13,7 +13,10 @@ jest.unstable_mockModule('node-cron', () => ({
 }));
 
 const mockLoadConfig = jest.fn<(path: string) => Record<string, unknown>>();
-const mockRunPipeline = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockRunPipeline = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+
+/** What runPipeline resolves to for a run that wrote and printed its brief. */
+const OK_RUN = { generated: true, print: { outcome: 'printed' } };
 
 jest.unstable_mockModule('../src/core.js', () => ({
   loadConfig: mockLoadConfig,
@@ -79,7 +82,7 @@ describe('startScheduler', () => {
 
   it('should invoke runGeneration when cron callback fires', () => {
     mockValidate.mockReturnValue(true);
-    mockRunPipeline.mockResolvedValue(undefined);
+    mockRunPipeline.mockResolvedValue(OK_RUN);
     mockLoadConfig.mockReturnValue({ model: 'test' });
 
     let cronCallback: (() => void) | undefined;
@@ -127,10 +130,7 @@ describe('startScheduler', () => {
 
     // The error should be caught by runGeneration's try/catch, not the outer .catch
     // But the outer .catch on line 47 handles truly unhandled rejections
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '[scheduler] Generation failed:',
-      expect.any(Error),
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[scheduler] Run failed:', expect.any(Error));
 
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
@@ -141,7 +141,7 @@ describe('runGeneration', () => {
   it('should call loadConfig and runPipeline, printing by default', async () => {
     const mockConfig = { model: 'claude-sonnet-4-20250514', output_dir: '/tmp' };
     mockLoadConfig.mockReturnValue(mockConfig);
-    mockRunPipeline.mockResolvedValue(undefined);
+    mockRunPipeline.mockResolvedValue(OK_RUN);
     delete process.env.PRINT_BRIEF;
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -150,7 +150,10 @@ describe('runGeneration', () => {
 
     expect(mockLoadConfig).toHaveBeenCalledWith('/tmp/config.yaml');
     // Default: print (preview false) so the container matches a host cron.
-    expect(mockRunPipeline).toHaveBeenCalledWith(mockConfig, { preview: false });
+    expect(mockRunPipeline).toHaveBeenCalledWith(mockConfig, {
+      preview: false,
+      trigger: 'scheduled',
+    });
 
     consoleSpy.mockRestore();
   });
@@ -158,14 +161,17 @@ describe('runGeneration', () => {
   it('should skip printing (preview) when PRINT_BRIEF=false', async () => {
     const mockConfig = { model: 'test', output_dir: '/tmp' };
     mockLoadConfig.mockReturnValue(mockConfig);
-    mockRunPipeline.mockResolvedValue(undefined);
+    mockRunPipeline.mockResolvedValue(OK_RUN);
     process.env.PRINT_BRIEF = 'false';
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
     await scheduler.runGeneration('/tmp/config.yaml');
 
-    expect(mockRunPipeline).toHaveBeenCalledWith(mockConfig, { preview: true });
+    expect(mockRunPipeline).toHaveBeenCalledWith(mockConfig, {
+      preview: true,
+      trigger: 'scheduled',
+    });
 
     delete process.env.PRINT_BRIEF;
     consoleSpy.mockRestore();
@@ -173,15 +179,15 @@ describe('runGeneration', () => {
 
   it('should log start and completion messages', async () => {
     mockLoadConfig.mockReturnValue({});
-    mockRunPipeline.mockResolvedValue(undefined);
+    mockRunPipeline.mockResolvedValue(OK_RUN);
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
     await scheduler.runGeneration('/tmp/config.yaml');
 
     const logs = consoleSpy.mock.calls.map((c) => c[0] as string);
-    expect(logs.some((l) => l.includes('Starting generation'))).toBe(true);
-    expect(logs.some((l) => l.includes('Generation complete'))).toBe(true);
+    expect(logs.some((l) => l.includes('Starting scheduled generation'))).toBe(true);
+    expect(logs.some((l) => l.includes('brief: written, print: printed'))).toBe(true);
 
     consoleSpy.mockRestore();
   });
@@ -197,10 +203,7 @@ describe('runGeneration', () => {
     // Should not throw
     await scheduler.runGeneration('/bad/path.yaml');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '[scheduler] Generation failed:',
-      expect.any(Error),
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[scheduler] Run failed:', expect.any(Error));
 
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
@@ -215,10 +218,7 @@ describe('runGeneration', () => {
 
     await scheduler.runGeneration('/tmp/config.yaml');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '[scheduler] Generation failed:',
-      expect.any(Error),
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[scheduler] Run failed:', expect.any(Error));
 
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
@@ -245,7 +245,7 @@ describe('runGeneration', () => {
     mockLoadConfig.mockReturnValue({
       vacation: [{ start: '2026-04-22', end: '2026-05-04' }],
     });
-    mockRunPipeline.mockResolvedValue(undefined);
+    mockRunPipeline.mockResolvedValue(OK_RUN);
 
     // Pin "today" to a vacation date via TZ-stable Date mock
     const realNow = Date.now;
@@ -278,7 +278,7 @@ describe('runGeneration', () => {
     mockLoadConfig.mockReturnValue({
       vacation: [{ start: '2026-04-22', end: '2026-05-04' }],
     });
-    mockRunPipeline.mockResolvedValue(undefined);
+    mockRunPipeline.mockResolvedValue(OK_RUN);
 
     const realDate = global.Date;
     global.Date = class extends realDate {
@@ -307,7 +307,7 @@ describe('runGeneration', () => {
     });
 
     mockLoadConfig.mockReturnValue({});
-    mockRunPipeline.mockReturnValue(firstRunPromise);
+    mockRunPipeline.mockReturnValue(firstRunPromise.then(() => OK_RUN));
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 

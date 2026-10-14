@@ -9,6 +9,7 @@ const mockMkdirSync = jest.fn();
 const mockExistsSync = jest.fn<(...args: unknown[]) => boolean>();
 const mockReaddirSync = jest.fn<(...args: unknown[]) => string[]>();
 const mockUnlinkSync = jest.fn();
+const mockRenameSync = jest.fn();
 const mockExecFileSync = jest.fn();
 
 const fsMock = {
@@ -18,6 +19,7 @@ const fsMock = {
   existsSync: mockExistsSync,
   readdirSync: mockReaddirSync,
   unlinkSync: mockUnlinkSync,
+  renameSync: mockRenameSync,
 };
 
 jest.unstable_mockModule('node:fs', () => ({
@@ -734,32 +736,14 @@ describe('saveBrief', () => {
   });
 });
 
-describe('printPdf', () => {
-  it('should call lp with correct printer and path', () => {
-    core.printPdf('/tmp/test.pdf', 'Brother_HL');
-
-    expect(mockExecFileSync).toHaveBeenCalledWith('lp', ['-d', 'Brother_HL', '/tmp/test.pdf'], {
-      stdio: 'inherit',
-    });
-  });
-
-  it('passes spaces through as argv, with no shell to re-parse them', () => {
+describe('printPdf (re-exported from print.ts)', () => {
+  it('calls lp with the printer and path as argv', () => {
     core.printPdf('/tmp/my brief.pdf', 'My Printer');
 
-    expect(mockExecFileSync).toHaveBeenCalledWith('lp', ['-d', 'My Printer', '/tmp/my brief.pdf'], {
-      stdio: 'inherit',
-    });
-  });
-
-  it('does not let a printer name from config reach a shell', () => {
-    core.printPdf('/tmp/test.pdf', '"; touch /tmp/pwned; #');
-
-    // The metacharacters arrive as one literal argv entry. execFileSync spawns no
-    // shell, so there is nothing to interpret them.
     expect(mockExecFileSync).toHaveBeenCalledWith(
       'lp',
-      ['-d', '"; touch /tmp/pwned; #', '/tmp/test.pdf'],
-      { stdio: 'inherit' },
+      ['-d', 'My Printer', '/tmp/my brief.pdf'],
+      expect.objectContaining({ encoding: 'utf-8' }),
     );
   });
 });
@@ -1219,6 +1203,92 @@ describe('notifyFailure', () => {
     ).resolves.toBeUndefined();
 
     consoleSpy.mockRestore();
+  });
+});
+
+describe('notify', () => {
+  afterEach(() => {
+    delete (globalThis as { fetch?: unknown }).fetch;
+  });
+
+  it('strips non-ASCII and caps the line at one SMS segment', async () => {
+    const spy = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    (globalThis as { fetch?: unknown }).fetch = spy;
+
+    await core.notify({ notify_webhook: 'http://relay.invalid/x' }, `CRIT ⚠ ${'x'.repeat(300)}`);
+
+    const body = JSON.parse((spy.mock.calls[0][1] as { body: string }).body) as {
+      message: string;
+    };
+    expect(body.message).toMatch(/^CRIT {2}x+$/);
+    expect(body.message.length).toBe(155);
+  });
+
+  it('logs a non-OK webhook response without throwing', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    (globalThis as { fetch?: unknown }).fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: false, status: 502 });
+
+    await core.notify({ notify_webhook: 'http://relay.invalid/x' }, 'WARN test');
+
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('502'));
+    errSpy.mockRestore();
+  });
+});
+
+describe('pingHeartbeat', () => {
+  afterEach(() => {
+    delete (globalThis as { fetch?: unknown }).fetch;
+  });
+
+  it('GETs the URL', async () => {
+    const spy = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    (globalThis as { fetch?: unknown }).fetch = spy;
+
+    await core.pingHeartbeat('https://hc.invalid/abc');
+
+    expect(spy).toHaveBeenCalledWith('https://hc.invalid/abc', expect.anything());
+  });
+
+  it('never throws, whatever the endpoint does', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    (globalThis as { fetch?: unknown }).fetch = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockRejectedValueOnce(new Error('ENOTFOUND'))
+      .mockRejectedValueOnce('bare string');
+
+    await expect(core.pingHeartbeat('https://hc.invalid/abc')).resolves.toBeUndefined();
+    await expect(core.pingHeartbeat('https://hc.invalid/abc')).resolves.toBeUndefined();
+    await expect(core.pingHeartbeat('https://hc.invalid/abc')).resolves.toBeUndefined();
+
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('404'));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('ENOTFOUND'));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('bare string'));
+    errSpy.mockRestore();
+  });
+});
+
+describe('isErrorBrief', () => {
+  it('recognises the generation-failed page', () => {
+    expect(
+      core.isErrorBrief({
+        title: 'x',
+        subtitle: '⚠ GENERATION FAILED',
+        sections: [{ heading: 'Generation Error', body: 'b' }],
+      }),
+    ).toBe(true);
+    expect(core.isErrorBrief({ title: 'x', sections: [{ heading: 'Generation Error' }] })).toBe(
+      true,
+    );
+  });
+
+  it('does not mistake a real brief for one', () => {
+    expect(core.isErrorBrief({ title: 'x', sections: [{ heading: 'Executive Brief' }] })).toBe(
+      false,
+    );
+    expect(core.isErrorBrief({ title: 'x', sections: [] })).toBe(false);
   });
 });
 
@@ -2095,8 +2165,10 @@ describe('runPipeline', () => {
     expect(mockExecFileSync).toHaveBeenCalledWith(
       'lp',
       expect.arrayContaining(['-d', 'Brother_HL']),
-      { stdio: 'inherit' },
+      expect.objectContaining({ encoding: 'utf-8' }),
     );
+    expect(result.generated).toBe(true);
+    expect(result.print.outcome).toBe('printed');
 
     consoleSpy.mockRestore();
   });
@@ -2138,6 +2210,158 @@ describe('runPipeline', () => {
     await expect(core.runPipeline(pipelineConfig)).rejects.toThrow('No data fetched');
 
     consoleSpy.mockRestore();
+  });
+
+  describe('delivery reporting', () => {
+    const noSleep = () => Promise.resolve();
+    let fetchSpy: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    let logSpy: ReturnType<typeof jest.spyOn>;
+    let errSpy: ReturnType<typeof jest.spyOn>;
+
+    beforeEach(() => {
+      fetchSpy = jest
+        .fn<(...args: unknown[]) => Promise<unknown>>()
+        .mockResolvedValue({ ok: true, status: 200 });
+      (globalThis as { fetch?: unknown }).fetch = fetchSpy;
+      logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      // clearAllMocks keeps implementations; a CUPS script from one test must not leak.
+      mockExecFileSync.mockReset();
+    });
+
+    afterEach(() => {
+      delete (globalThis as { fetch?: unknown }).fetch;
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    });
+
+    /** The JSON written to the status file's temporary path. */
+    function writtenStatus(): { last: { print: string; trigger: string; generated: boolean } } {
+      const call = mockWriteFileSync.mock.calls.find((c) =>
+        String(c[0]).endsWith('status.json.tmp'),
+      );
+      expect(call).toBeDefined();
+      return JSON.parse(String(call![1])) as never;
+    }
+
+    function webhookMessages(): string[] {
+      return fetchSpy.mock.calls
+        .filter((c) => c[1] && (c[1] as { method?: string }).method === 'POST')
+        .map((c) => (JSON.parse((c[1] as { body: string }).body) as { message: string }).message);
+    }
+
+    const webhookConfig: CallsheetConfig = {
+      ...pipelineConfig,
+      notify_webhook: 'http://relay.invalid/house',
+      heartbeat_url: 'https://hc.invalid/ping/abc',
+    };
+
+    it('reports a print failure without throwing, alerts, and records it', async () => {
+      setupPipelineMocks();
+      mockExecFileSync.mockImplementation(() => {
+        throw Object.assign(new Error('Command failed'), {
+          stderr: 'lp: Error - The printer or class does not exist.',
+        });
+      });
+
+      const result = await core.runPipeline(webhookConfig, {
+        trigger: 'scheduled',
+        print: { sleep: noSleep, attempts: 2 },
+      });
+
+      expect(result.generated).toBe(true);
+      expect(result.print.outcome).toBe('failed');
+      expect(webhookMessages()[0]).toMatch(/^CRIT Callsheet brief not printed: /);
+      const status = writtenStatus();
+      expect(status.last.print).toBe('failed');
+      expect(status.last.trigger).toBe('scheduled');
+      expect(mockRenameSync).toHaveBeenCalled();
+      // A run that produced nothing on paper must not tell the dead-man's switch it was fine.
+      expect(fetchSpy.mock.calls.some((c) => c[0] === webhookConfig.heartbeat_url)).toBe(false);
+    });
+
+    it('warns when the print job is accepted but never completes', async () => {
+      setupPipelineMocks();
+      mockExecFileSync.mockImplementation((cmd: unknown, args: unknown) => {
+        if (cmd === 'lp') return 'request id is Brother_HL-5 (1 file(s))';
+        if ((args as string[])[0] === '-W') return 'Brother_HL-5 node 1 today\n';
+        return 'printer Brother_HL disabled - paper out';
+      });
+
+      const result = await core.runPipeline(webhookConfig, {
+        trigger: 'scheduled',
+        print: { sleep: noSleep, pollMs: 10, confirmTimeoutMs: 30 },
+      });
+
+      expect(result.print.outcome).toBe('queued');
+      expect(webhookMessages()[0]).toMatch(/^WARN Callsheet print stuck: job Brother_HL-5/);
+      expect(writtenStatus().last.print).toBe('queued');
+    });
+
+    it('pings the heartbeat after a good scheduled run', async () => {
+      setupPipelineMocks();
+
+      await core.runPipeline(webhookConfig, { trigger: 'scheduled', print: { sleep: noSleep } });
+
+      expect(fetchSpy).toHaveBeenCalledWith(webhookConfig.heartbeat_url, expect.anything());
+      expect(webhookMessages()).toEqual([]);
+    });
+
+    it('does not ping the heartbeat for a manual run', async () => {
+      setupPipelineMocks();
+
+      const result = await core.runPipeline(webhookConfig, { print: { sleep: noSleep } });
+
+      expect(result.print.outcome).toBe('printed');
+      expect(writtenStatus().last.trigger).toBe('manual');
+      expect(fetchSpy.mock.calls.some((c) => c[0] === webhookConfig.heartbeat_url)).toBe(false);
+    });
+
+    it('records a dashboard preview as a skipped print', async () => {
+      setupPipelineMocks();
+
+      await core.runPipeline(webhookConfig, { preview: true });
+
+      expect(writtenStatus().last).toMatchObject({ trigger: 'dashboard', print: 'skipped' });
+    });
+
+    it('records and alerts when a scheduled run fetches nothing', async () => {
+      mockLoadConnectors.mockReturnValue({ connectors: [], initErrors: [] });
+
+      await expect(core.runPipeline(webhookConfig, { trigger: 'scheduled' })).rejects.toThrow(
+        'No data fetched',
+      );
+
+      expect(writtenStatus().last.generated).toBe(false);
+      expect(webhookMessages()[0]).toMatch(/^CRIT Callsheet: No data fetched/);
+    });
+
+    it('does not alert when a manual run fetches nothing', async () => {
+      mockLoadConnectors.mockReturnValue({ connectors: [], initErrors: [] });
+
+      await expect(core.runPipeline(webhookConfig)).rejects.toThrow('No data fetched');
+
+      expect(webhookMessages()).toEqual([]);
+    });
+
+    it('records an error page as a failed generation, with its explanation', async () => {
+      setupPipelineMocks();
+      mockMessagesCreate.mockReset();
+      mockMessagesCreate.mockRejectedValue(
+        Object.assign(new Error('Your credit balance is too low'), { status: 400 }),
+      );
+
+      const result = await core.runPipeline(webhookConfig, {
+        trigger: 'scheduled',
+        print: { sleep: noSleep },
+      });
+
+      expect(result.generated).toBe(false);
+      const status = writtenStatus() as unknown as { last: { generated: boolean; error: string } };
+      expect(status.last.generated).toBe(false);
+      expect(status.last.error).toMatch(/^Brief generation failed after 1 attempt/);
+      expect(fetchSpy.mock.calls.some((c) => c[0] === webhookConfig.heartbeat_url)).toBe(false);
+    });
   });
 
   it('should note connector issues in pipeline', async () => {

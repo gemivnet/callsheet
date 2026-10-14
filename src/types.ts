@@ -70,6 +70,14 @@ export interface CallsheetConfig {
    */
   notify_webhook?: string;
   /**
+   * Optional dead-man's-switch URL, fetched with a GET after each scheduled
+   * run that produced a brief and did not fail to print — e.g. a
+   * healthchecks.io ping URL. Failures already alert through
+   * `notify_webhook`; this catches the runs that never start at all, such as
+   * a container that is down at the scheduled time.
+   */
+  heartbeat_url?: string;
+  /**
    * IANA timezone for the household, e.g. "America/Chicago". Used for the
    * brief's date, output filenames, connector query windows and the
    * scheduler. Falls back to `process.env.TZ`, then the system zone.

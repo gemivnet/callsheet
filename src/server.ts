@@ -15,6 +15,8 @@ import {
 } from './connectors/google-auth.js';
 import { getMonthlyUsageData, getUsageSummary } from './usage.js';
 import { isGenerating } from './scheduler.js';
+import { readStatus } from './status.js';
+import { todayYmd } from './dates.js';
 import type { CallsheetConfig } from './types.js';
 
 const startedAt = new Date().toISOString();
@@ -116,6 +118,10 @@ export function createApp(): express.Express {
 
   // ─── Health ────────────────────────────────────────────────────────────────
 
+  // Liveness only: is the process up and serving. The container healthcheck
+  // points here, and image updaters commonly roll back a container whose
+  // healthcheck fails after an update — a printer out of paper must never roll
+  // back a good image. Whether the brief was delivered is /api/status.
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
@@ -123,6 +129,7 @@ export function createApp(): express.Express {
       started_at: startedAt,
       uptime_seconds: Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000),
       generating: isGenerating(),
+      last_run: readStatus(getOutputDir()).last ?? null,
     });
   });
 
@@ -202,11 +209,11 @@ export function createApp(): express.Express {
 
     try {
       const config = loadConfig(getConfigPath());
-      const result = await runPipeline(config, { preview: true });
+      const result = await runPipeline(config, { preview: true, trigger: 'dashboard' });
 
       res.json({
         success: true,
-        date: new Date().toISOString().slice(0, 10),
+        date: todayYmd(config.timezone),
         title: result.brief.title,
         pdfPath: result.pdfPath,
         jsonPath: result.jsonPath,

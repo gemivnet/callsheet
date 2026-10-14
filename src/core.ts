@@ -8,7 +8,6 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import yaml from 'js-yaml';
 import type {
@@ -24,6 +23,11 @@ import { renderPdf } from './render.js';
 import { logUsage } from './usage.js';
 import { todayYmd, shiftYmd, formatLongDate } from './dates.js';
 import { deriveStationsFromEvents, type AirportAlias } from './airports.js';
+import { printAndConfirm, type PrintOptions, type PrintResult } from './print.js';
+import { recordRun, isScheduledTrigger, type RunTrigger } from './status.js';
+
+// Printing moved to its own module; re-exported so existing imports keep working.
+export { printPdf } from './print.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -874,9 +878,6 @@ function recordRepairedIssues(outputDir: string, repaired: string[]): void {
  * case where the machine has to speak up.
  */
 export async function notifyFailure(config: CallsheetConfig, error: unknown): Promise<void> {
-  const url = config.notify_webhook;
-  if (!url) return;
-
   const { status } = error as { status?: number };
   const raw = error instanceof Error ? error.message : String(error);
   let detail = raw.replace(/\s+/g, ' ').slice(0, 80);
@@ -886,11 +887,24 @@ export async function notifyFailure(config: CallsheetConfig, error: unknown): Pr
     detail = 'Anthropic auth rejected';
   }
 
+  await notify(config, `CRIT Callsheet brief failed${status ? ` (${status})` : ''}: ${detail}`);
+}
+
+/**
+ * Post one alert line to the configured webhook, if there is one.
+ *
+ * Shared by every failure the household needs to hear about — a brief that
+ * could not be written, and one that was written but never printed. The second
+ * went unreported for over two weeks in 2026 because only the first had a path
+ * to this function.
+ */
+export async function notify(config: CallsheetConfig, text: string): Promise<void> {
+  const url = config.notify_webhook;
+  if (!url) return;
+
   // Plain ASCII, one short line: SMS gateways drop to a 70-character segment the
   // moment a message leaves GSM-7, and a truncated alert is a wasted one.
-  const message = `CRIT Callsheet brief failed${status ? ` (${status})` : ''}: ${detail}`
-    .replace(/[^\x20-\x7E]/g, '')
-    .slice(0, 155);
+  const message = text.replace(/[^\x20-\x7E]/g, '').slice(0, 155);
 
   try {
     const res = await fetch(url, {
@@ -1504,34 +1518,86 @@ export function saveBrief(brief: Brief, outputDir: string): string {
   return path;
 }
 
-export function printPdf(pdfPath: string, printer: string): void {
-  // execFileSync, not execSync: `printer` comes from config.yaml, which the dashboard can
-  // rewrite unauthenticated, so an interpolated shell string was a command-injection sink.
-  // No shell is spawned here, so quoting is not required and metacharacters are inert.
-  execFileSync('lp', ['-d', printer, pdfPath], { stdio: 'inherit' });
+/** True for the page `buildErrorBrief` produces when the model could not write a brief. */
+export function isErrorBrief(brief: Brief): boolean {
+  return (
+    Boolean(brief.subtitle?.includes('GENERATION FAILED')) ||
+    brief.sections[0]?.heading === 'Generation Error'
+  );
+}
+
+/** First paragraph of an error page's explanation, for the status file. */
+function errorBriefSummary(brief: Brief): string {
+  const body = brief.sections[0]?.body ?? '';
+  return body.split('\n')[0].slice(0, 200) || 'Brief generation failed';
+}
+
+/**
+ * Ping a dead-man's-switch URL (e.g. a healthchecks.io check) after a good
+ * scheduled run. The alerts above cover runs that fail; only a missing ping can
+ * cover a run that never started — a container that is down, or a scheduler
+ * that never fired. Never throws.
+ */
+export async function pingHeartbeat(url: string): Promise<void> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) console.error(`  Heartbeat returned ${res.status}`);
+  } catch (e) {
+    console.error(`  Heartbeat error: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Pipeline — reusable generation flow for CLI, scheduler, and web API
 // ---------------------------------------------------------------------------
 
+export interface PipelineOptions {
+  /** Generate the PDF without printing it. */
+  preview?: boolean;
+  /** What started the run; recorded in the status file. */
+  trigger?: RunTrigger;
+  /** Print retry/confirmation tuning — tests shorten the waits. */
+  print?: PrintOptions;
+}
+
 export interface PipelineResult {
   brief: Brief;
   jsonPath: string;
   pdfPath: string;
   dataPath: string;
+  /** False when an error page was produced instead of a brief. */
+  generated: boolean;
+  print: PrintResult | { outcome: 'skipped'; jobId?: undefined; detail?: string };
 }
 
 export async function runPipeline(
   config: CallsheetConfig,
-  options: { preview?: boolean } = {},
+  options: PipelineOptions = {},
 ): Promise<PipelineResult> {
+  const trigger: RunTrigger = options.trigger ?? (options.preview ? 'dashboard' : 'manual');
+  const startedAt = new Date().toISOString();
+  const runDate = todayYmd();
+  const outputDir = config.output_dir ?? 'output';
+
   // Fetch
   console.log('Fetching data...');
   const { results, issues: connectorIssues } = await fetchAll(config);
+  const issueLines = connectorIssues.map((i) => `${i.connector}: ${i.error}`);
 
   if (results.length === 0) {
-    throw new Error('No data fetched. Check your config and connector settings.');
+    const message = 'No data fetched. Check your config and connector settings.';
+    recordRun(outputDir, {
+      date: runDate,
+      trigger,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      generated: false,
+      print: 'skipped',
+      error: message,
+      connectorIssues: issueLines,
+    });
+    if (isScheduledTrigger(trigger)) await notify(config, `CRIT Callsheet: ${message}`);
+    throw new Error(message);
   }
 
   if (connectorIssues.length) {
@@ -1541,7 +1607,6 @@ export async function runPipeline(
   const dataPayload = buildDataPayload(results);
 
   // Save raw data
-  const outputDir = config.output_dir ?? 'output';
   const dataPath = saveDataPayload(dataPayload, outputDir);
   console.log(`  Data: ${dataPath}`);
 
@@ -1563,17 +1628,51 @@ export async function runPipeline(
   const pdfPath = await renderPdf(brief, outputDir);
   console.log(`  PDF:  ${pdfPath}`);
 
-  // Print (unless preview mode)
+  const generated = !isErrorBrief(brief);
+
+  // Print (unless preview mode). A print failure is reported, not thrown: the
+  // brief exists and is on the dashboard, and the run should say exactly what
+  // went wrong instead of collapsing into a generic "generation failed".
+  let print: PipelineResult['print'] = { outcome: 'skipped' };
   if (!options.preview) {
     const printer = config.printer ?? '';
     if (printer) {
       console.log(`Printing to ${printer}...`);
-      printPdf(pdfPath, printer);
-      console.log('Done.');
+      print = await printAndConfirm(pdfPath, printer, options.print);
+      if (print.outcome === 'failed') {
+        console.error(`  Print FAILED: ${print.detail}`);
+        await notify(config, `CRIT Callsheet brief not printed: ${print.detail}`);
+      } else if (print.outcome === 'queued') {
+        console.error(`  Print not confirmed: ${print.detail}`);
+        await notify(config, `WARN Callsheet print stuck: ${print.detail}`);
+      } else {
+        console.log('Done.');
+      }
     } else {
       console.log("No printer configured. Set 'printer' in config.yaml to enable printing.");
     }
   }
 
-  return { brief, jsonPath, pdfPath, dataPath };
+  recordRun(outputDir, {
+    date: runDate,
+    trigger,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    generated,
+    print: print.outcome,
+    printJob: print.jobId,
+    error: generated ? print.detail : errorBriefSummary(brief),
+    connectorIssues: issueLines.length ? issueLines : undefined,
+  });
+
+  if (
+    config.heartbeat_url &&
+    isScheduledTrigger(trigger) &&
+    generated &&
+    print.outcome !== 'failed'
+  ) {
+    await pingHeartbeat(config.heartbeat_url);
+  }
+
+  return { brief, jsonPath, pdfPath, dataPath, generated, print };
 }
