@@ -196,7 +196,8 @@ describe('weather connector', () => {
                       urgency: 'Expected',
                       headline: 'Winter Storm Warning until Friday',
                       onset: '2026-03-28T06:00:00-05:00',
-                      expires: '2026-03-29T18:00:00-05:00',
+                      ends: '2026-03-29T22:00:00-05:00',
+                      expires: '2026-03-29T10:00:00-05:00',
                     },
                   },
                 ],
@@ -209,14 +210,62 @@ describe('weather connector', () => {
       const conn = create(baseConfig);
       const result = await conn.fetch();
 
-      const alerts = result.data.alerts as { onset: string | null; expires: string | null; event: string }[];
+      const alerts = result.data.alerts as {
+        onset: string | null;
+        ends: string | null;
+        messageExpires: string | null;
+        event: string;
+      }[];
       expect(alerts).toHaveLength(1);
       expect(alerts[0].event).toBe('Winter Storm Warning');
-      // onset and expires should be formatted strings, not null
-      expect(alerts[0].onset).not.toBeNull();
+      // The hazard's end and the message's expiry are different things, and
+      // the brief must be able to tell them apart.
       expect(typeof alerts[0].onset).toBe('string');
-      expect(alerts[0].expires).not.toBeNull();
-      expect(typeof alerts[0].expires).toBe('string');
+      expect(typeof alerts[0].ends).toBe('string');
+      expect(typeof alerts[0].messageExpires).toBe('string');
+      expect(alerts[0].ends).not.toBe(alerts[0].messageExpires);
+      expect(result.description).toContain(
+        '`messageExpires` is only when the alert text is reissued',
+      );
+    });
+
+    it('formats alert times in the configured timezone, and handles missing ones', async () => {
+      mockFetch((url) => {
+        if (url.includes('/points/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ properties: { forecast: 'https://x/forecast' } }),
+          });
+        }
+        if (url.includes('/forecast')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ properties: { periods: [] } }),
+          });
+        }
+        if (url.includes('/alerts/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                features: [
+                  { properties: { event: 'Heat Advisory', ends: '2026-07-01T03:00:00Z' } },
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: false });
+      });
+
+      const result = await create({ ...baseConfig, timezone: 'UTC' }).fetch();
+      const [alert] = result.data.alerts as {
+        ends: string;
+        onset: string | null;
+        messageExpires: string | null;
+      }[];
+      expect(alert.ends).toContain('3:00 AM');
+      expect(alert.onset).toBeNull();
+      expect(alert.messageExpires).toBeNull();
     });
 
     it('should handle null precipitationChance', async () => {
@@ -281,8 +330,7 @@ describe('weather connector', () => {
         if (url.includes('/forecast')) {
           return Promise.resolve({
             ok: true,
-            json: () =>
-              Promise.resolve({ properties: { periods: [] } }),
+            json: () => Promise.resolve({ properties: { periods: [] } }),
           });
         }
         if (url.includes('/alerts/')) {
@@ -293,8 +341,11 @@ describe('weather connector', () => {
 
       const conn = create(baseConfig);
       const result = await conn.fetch();
-      // Should still succeed with empty alerts
+      // Should still succeed with empty alerts — but say they are unavailable,
+      // because an outage is not the same as a quiet day.
       expect(result.data.alerts).toEqual([]);
+      expect(result.data.alertsUnavailable).toBe(true);
+      expect(result.description).toContain('could NOT be fetched');
     });
 
     it('should throw on NWS points API error', async () => {

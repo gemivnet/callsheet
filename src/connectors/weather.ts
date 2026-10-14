@@ -23,10 +23,32 @@ interface NwsAlert {
   urgency: string;
   headline: string;
   onset: string | null;
-  expires: string | null;
+  /** When the hazard itself ends. */
+  ends: string | null;
+  /**
+   * When this alert MESSAGE expires and is due to be reissued — not when the
+   * hazard ends. Reading it as the end had briefs lifting a heat warning
+   * hours early and putting a morning lesson "clear of the window" inside it.
+   */
+  messageExpires: string | null;
 }
 
-async function fetchAlerts(lat: number, lon: number): Promise<NwsAlert[]> {
+/** "Wed, Oct 14, 3:00 PM" in the household timezone, or null. */
+function alertTime(iso: unknown, tz?: string): string | null {
+  if (typeof iso !== 'string' || !iso) return null;
+  return new Date(iso).toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    ...(tz ? { timeZone: tz } : {}),
+  });
+}
+
+/** Active alerts, or null when they could not be fetched (which is not the same as none). */
+async function fetchAlerts(lat: number, lon: number, tz?: string): Promise<NwsAlert[] | null> {
   try {
     const data = await retry(
       async () => {
@@ -48,38 +70,18 @@ async function fetchAlerts(lat: number, lon: number): Promise<NwsAlert[]> {
 
     return (data.features ?? []).map((f) => {
       const p = f.properties;
-      const onset = p.onset as string | null;
-      const expires = p.expires as string | null;
-
       return {
         event: (p.event as string) ?? '',
         severity: (p.severity as string) ?? '',
         urgency: (p.urgency as string) ?? '',
         headline: (p.headline as string) ?? '',
-        onset: onset
-          ? new Date(onset).toLocaleString('en-US', {
-              weekday: 'short',
-              month: 'short',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true,
-            })
-          : null,
-        expires: expires
-          ? new Date(expires).toLocaleString('en-US', {
-              weekday: 'short',
-              month: 'short',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true,
-            })
-          : null,
+        onset: alertTime(p.onset, tz),
+        ends: alertTime(p.ends, tz),
+        messageExpires: alertTime(p.expires, tz),
       };
     });
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -138,7 +140,9 @@ export function create(config: ConnectorConfig): Connector {
       }));
 
       // Step 3: Get active weather alerts
-      const alerts = await fetchAlerts(lat, lon);
+      const tz = config.timezone as string | undefined;
+      const fetched = await fetchAlerts(lat, lon, tz);
+      const alerts = fetched ?? [];
 
       const alertSummary = alerts.length
         ? `${alerts.length} active alert(s): ${alerts.map((a) => a.event).join(', ')}. `
@@ -151,12 +155,23 @@ export function create(config: ConnectorConfig): Connector {
           'Includes today, tonight, and tomorrow. ' +
           (alerts.length
             ? '**Active weather alerts are HIGH PRIORITY** — surface them prominently in the Executive Brief. ' +
-              "Include the alert type, timing, and how it affects the day's plans (driving, flying, outdoor events). "
+              "Include the alert type, timing, and how it affects the day's plans (driving, flying, outdoor events). " +
+              "An alert's `ends` is when the hazard ends; `messageExpires` is only when the alert text is reissued — " +
+              'never present it as the end of the hazard. '
             : '') +
+          (fetched === null
+            ? 'Active alerts could NOT be fetched this run — do not say there are none. '
+            : '') +
+          'Forecast winds are in mph; aviation weather uses knots — never relabel one as the other. ' +
           'For routine weather, include a one-line summary. ' +
           'Mention weather if it affects plans (rain on outdoor event days, ' +
           'extreme temps, icy roads, high winds). Skip if unremarkable.',
-        data: { location, periods: forecast, alerts },
+        data: {
+          location,
+          periods: forecast,
+          alerts,
+          ...(fetched === null ? { alertsUnavailable: true } : {}),
+        },
         priorityHint: alerts.length ? 'high' : 'low',
       };
     },
