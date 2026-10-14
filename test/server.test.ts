@@ -16,6 +16,7 @@ const mockLoadConfig = jest.fn();
 const mockRunPipeline = jest.fn();
 const mockGetRegistry = jest.fn().mockReturnValue(new Map());
 const mockIsGenerating = jest.fn().mockReturnValue(false);
+const mockExpectedRunDate = jest.fn<() => string | null>().mockReturnValue(null);
 const mockGetMonthlyUsageData = jest.fn().mockReturnValue({ month: '2026-03', entries: [] });
 const mockGetUsageSummary = jest
   .fn()
@@ -84,6 +85,7 @@ jest.unstable_mockModule('../src/usage.js', () => ({
 
 jest.unstable_mockModule('../src/scheduler.js', () => ({
   isGenerating: mockIsGenerating,
+  expectedRunDate: mockExpectedRunDate,
 }));
 
 // ── Import after mocks ──────────────────────────────────────────────────────
@@ -152,6 +154,7 @@ beforeEach(() => {
   mockExistsSync.mockReturnValue(false);
   mockGetRegistry.mockReturnValue(new Map());
   mockIsGenerating.mockReturnValue(false);
+  mockExpectedRunDate.mockReturnValue(null);
 });
 
 /** Serve a status.json from the mocked filesystem. */
@@ -189,6 +192,61 @@ describe('GET /api/health', () => {
     // Liveness only — a delivery failure must not mark the container unhealthy.
     expect(res.status).toBe(200);
     expect(data.last_run.print).toBe('failed');
+  });
+});
+
+describe('GET /api/status', () => {
+  it('is 200 ok after a printed scheduled run', async () => {
+    mockLoadConfig.mockReturnValue({});
+    mockExpectedRunDate.mockReturnValue('2026-10-14');
+    withStatusFile({ last: scheduledRun(), lastScheduled: scheduledRun() });
+
+    const res = await request(server, 'GET', '/api/status');
+
+    expect(res.status).toBe(200);
+    expect(json(res)).toMatchObject({ state: 'ok', generating: false });
+  });
+
+  it('is 503 when the last scheduled brief was not printed', async () => {
+    mockLoadConfig.mockReturnValue({});
+    withStatusFile({ lastScheduled: scheduledRun({ print: 'failed' }) });
+
+    const res = await request(server, 'GET', '/api/status');
+
+    expect(res.status).toBe(503);
+    expect((json(res) as { state: string }).state).toBe('failed');
+  });
+
+  it('is 503 when a due run never happened', async () => {
+    mockLoadConfig.mockReturnValue({});
+    mockExpectedRunDate.mockReturnValue('2026-10-04');
+    withStatusFile({ lastScheduled: scheduledRun({ date: '2026-10-03' }) });
+
+    const res = await request(server, 'GET', '/api/status');
+
+    expect(res.status).toBe(503);
+    expect((json(res) as { state: string }).state).toBe('overdue');
+  });
+
+  it('is 200 but degraded when the print job sat in the queue', async () => {
+    mockLoadConfig.mockReturnValue({});
+    withStatusFile({ lastScheduled: scheduledRun({ print: 'queued' }) });
+
+    const res = await request(server, 'GET', '/api/status');
+
+    expect(res.status).toBe(200);
+    expect((json(res) as { state: string }).state).toBe('degraded');
+  });
+
+  it('still answers when the config cannot be loaded', async () => {
+    mockLoadConfig.mockImplementationOnce(() => {
+      throw new Error('no config');
+    });
+
+    const res = await request(server, 'GET', '/api/status');
+
+    expect(res.status).toBe(200);
+    expect((json(res) as { state: string }).state).toBe('unknown');
   });
 });
 

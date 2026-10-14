@@ -3,7 +3,7 @@ import { jest } from '@jest/globals';
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockValidate = jest.fn<(expr: string) => boolean>();
-const mockSchedule = jest.fn<(expr: string, cb: () => void) => { stop: () => void }>();
+const mockSchedule = jest.fn<(expr: string, cb: () => void) => Record<string, unknown>>();
 
 jest.unstable_mockModule('node-cron', () => ({
   default: {
@@ -15,8 +15,21 @@ jest.unstable_mockModule('node-cron', () => ({
 const mockLoadConfig = jest.fn<(path: string) => Record<string, unknown>>();
 const mockRunPipeline = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 
+const mockReadStatus = jest.fn<(dir: string) => Record<string, unknown>>().mockReturnValue({});
+
+jest.unstable_mockModule('../src/status.js', () => ({
+  readStatus: mockReadStatus,
+  scheduledRunExists: (status: { lastScheduled?: { date?: string } }, date: string) =>
+    status.lastScheduled?.date === date,
+}));
+
 /** What runPipeline resolves to for a run that wrote and printed its brief. */
 const OK_RUN = { generated: true, print: { outcome: 'printed' } };
+
+/** A cron task double: never matches, records listeners. */
+function fakeTask(overrides: Record<string, unknown> = {}) {
+  return { stop: jest.fn(), on: jest.fn(), match: jest.fn(() => false), ...overrides };
+}
 
 jest.unstable_mockModule('../src/core.js', () => ({
   loadConfig: mockLoadConfig,
@@ -30,6 +43,11 @@ const scheduler = await import('../src/scheduler.js');
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockReadStatus.mockReturnValue({});
+});
+
+afterEach(() => {
+  scheduler.stopScheduler();
 });
 
 describe('isGenerating', () => {
@@ -51,7 +69,7 @@ describe('startScheduler', () => {
 
   it('should call cron.schedule with valid expression', () => {
     mockValidate.mockReturnValue(true);
-    const mockTask = { stop: jest.fn() };
+    const mockTask = fakeTask();
     mockSchedule.mockReturnValue(mockTask);
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -67,7 +85,7 @@ describe('startScheduler', () => {
 
   it('should log schedule details', () => {
     mockValidate.mockReturnValue(true);
-    mockSchedule.mockReturnValue({ stop: jest.fn() });
+    mockSchedule.mockReturnValue(fakeTask());
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -88,7 +106,7 @@ describe('startScheduler', () => {
     let cronCallback: (() => void) | undefined;
     mockSchedule.mockImplementation((_expr: string, cb: () => void) => {
       cronCallback = cb;
-      return { stop: jest.fn() };
+      return fakeTask();
     });
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -113,7 +131,7 @@ describe('startScheduler', () => {
     let cronCallback: (() => void) | undefined;
     mockSchedule.mockImplementation((_expr: string, cb: () => void) => {
       cronCallback = cb;
-      return { stop: jest.fn() };
+      return fakeTask();
     });
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -419,5 +437,295 @@ describe('isOnVacation', () => {
   it('uses today in TZ when no date passed', () => {
     // Just verify it doesn't throw and returns a boolean for an empty config
     expect(typeof scheduler.isOnVacation({})).toBe('boolean');
+  });
+});
+
+// ── Catch-up ─────────────────────────────────────────────────────────────────
+
+/** A task that fires at 04:00 local time every day. */
+const at4am = (d: Date) => d.getHours() === 4 && d.getMinutes() === 0;
+
+/** Let a chain of resolved promises settle. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
+describe('catchupHours', () => {
+  afterEach(() => {
+    delete process.env.CATCHUP_HOURS;
+  });
+
+  it('defaults to six hours', () => {
+    expect(scheduler.catchupHours()).toBe(scheduler.DEFAULT_CATCHUP_HOURS);
+  });
+
+  it('reads CATCHUP_HOURS, including 0 to disable', () => {
+    process.env.CATCHUP_HOURS = '2';
+    expect(scheduler.catchupHours()).toBe(2);
+    process.env.CATCHUP_HOURS = '0';
+    expect(scheduler.catchupHours()).toBe(0);
+  });
+
+  it('ignores nonsense and negatives', () => {
+    for (const bad of ['abc', '-1', '  ']) {
+      process.env.CATCHUP_HOURS = bad;
+      expect(scheduler.catchupHours()).toBe(scheduler.DEFAULT_CATCHUP_HOURS);
+    }
+  });
+});
+
+describe('lastOccurrence', () => {
+  it('finds the most recent matching minute within the window', () => {
+    const now = new Date(2026, 9, 14, 9, 17, 42);
+    const occ = scheduler.lastOccurrence({ match: at4am }, now, 6);
+    expect(occ).toEqual(new Date(2026, 9, 14, 4, 0, 0));
+  });
+
+  it('counts the current minute', () => {
+    const now = new Date(2026, 9, 14, 4, 0, 30);
+    expect(scheduler.lastOccurrence({ match: at4am }, now, 1)).toEqual(
+      new Date(2026, 9, 14, 4, 0, 0),
+    );
+  });
+
+  it('returns null when nothing matched inside the window', () => {
+    const now = new Date(2026, 9, 14, 11, 0);
+    expect(scheduler.lastOccurrence({ match: at4am }, now, 6)).toBeNull();
+  });
+});
+
+describe('catchUpIfDue', () => {
+  let logSpy: ReturnType<typeof jest.spyOn>;
+  let errSpy: ReturnType<typeof jest.spyOn>;
+  const task = { match: at4am };
+  const morning = new Date(2026, 9, 14, 9, 0);
+
+  beforeEach(() => {
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockLoadConfig.mockReturnValue({ output_dir: '/tmp/out' });
+    mockRunPipeline.mockResolvedValue(OK_RUN);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    delete process.env.CATCHUP_HOURS;
+  });
+
+  it('runs a catch-up when the scheduled time passed with no brief', async () => {
+    const ran = await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning);
+
+    expect(ran).toBe(true);
+    expect(mockReadStatus).toHaveBeenCalledWith('/tmp/out');
+    expect(mockRunPipeline).toHaveBeenCalledWith(expect.anything(), {
+      preview: false,
+      trigger: 'catch-up',
+    });
+  });
+
+  it('does nothing when the scheduler already ran for that day', async () => {
+    mockReadStatus.mockReturnValue({ lastScheduled: { date: '2026-10-14' } });
+
+    expect(await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning)).toBe(false);
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does nothing once the catch-up window has passed', async () => {
+    const afternoon = new Date(2026, 9, 14, 11, 30);
+    expect(await scheduler.catchUpIfDue(task, '/tmp/config.yaml', afternoon)).toBe(false);
+    expect(mockLoadConfig).not.toHaveBeenCalled();
+  });
+
+  it('can be turned off with CATCHUP_HOURS=0', async () => {
+    process.env.CATCHUP_HOURS = '0';
+    expect(await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning)).toBe(false);
+    expect(mockLoadConfig).not.toHaveBeenCalled();
+  });
+
+  it('respects vacation', async () => {
+    mockLoadConfig.mockReturnValue({
+      output_dir: '/tmp/out',
+      vacation: [{ start: '2026-10-10', end: '2026-10-20' }],
+    });
+    expect(await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning)).toBe(false);
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when the config cannot be loaded', async () => {
+    mockLoadConfig.mockImplementation(() => {
+      throw new Error('gone');
+    });
+    expect(await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning)).toBe(false);
+    expect(errSpy).toHaveBeenCalled();
+  });
+
+  it('defaults the output directory', async () => {
+    mockLoadConfig.mockReturnValue({});
+    await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning);
+    expect(mockReadStatus).toHaveBeenCalledWith('output');
+  });
+
+  it('does not start a second run while one is in progress', async () => {
+    let release!: () => void;
+    mockRunPipeline.mockReturnValue(new Promise((r) => (release = () => r(OK_RUN))));
+    const first = scheduler.runGeneration('/tmp/config.yaml');
+
+    expect(await scheduler.catchUpIfDue(task, '/tmp/config.yaml', morning)).toBe(false);
+
+    release();
+    await first;
+  });
+});
+
+describe('startScheduler catch-up wiring', () => {
+  let logSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: new Date(2026, 9, 14, 9, 0),
+      doNotFake: ['nextTick', 'queueMicrotask'],
+    });
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    mockValidate.mockReturnValue(true);
+    mockLoadConfig.mockReturnValue({ output_dir: '/tmp/out' });
+    mockRunPipeline.mockResolvedValue(OK_RUN);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    logSpy.mockRestore();
+  });
+
+  it('catches up on start-up when the container came up after the scheduled time', async () => {
+    mockSchedule.mockReturnValue(fakeTask({ match: at4am }));
+
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+    await flush();
+
+    expect(mockRunPipeline).toHaveBeenCalledWith(expect.anything(), {
+      preview: false,
+      trigger: 'catch-up',
+    });
+  });
+
+  it('runs the missed brief when node-cron reports a missed execution', async () => {
+    // Already ran at start-up today? No — the status says yesterday.
+    mockReadStatus.mockReturnValue({ lastScheduled: { date: '2026-10-13' } });
+    const handlers: Record<string, (ctx: { date: Date }) => void> = {};
+    mockSchedule.mockReturnValue(
+      fakeTask({
+        match: at4am,
+        on: jest.fn((event: string, fn: (ctx: { date: Date }) => void) => {
+          handlers[event] = fn;
+        }),
+      }),
+    );
+
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+    await flush();
+    mockRunPipeline.mockClear();
+    // The start-up check ran it; pretend that run never recorded itself.
+    handlers['execution:missed']({ date: new Date(2026, 9, 14, 4, 0) });
+    await flush();
+
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes('missed the run due at'))).toBe(true);
+  });
+
+  it('re-checks from a watchdog timer', async () => {
+    const match = jest.fn(() => false);
+    mockSchedule.mockReturnValue(fakeTask({ match }));
+
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+    await flush();
+    const afterStartup = match.mock.calls.length;
+
+    jest.advanceTimersByTime(15 * 60_000);
+    await flush();
+
+    expect(match.mock.calls.length).toBeGreaterThan(afterStartup);
+  });
+
+  it('logs, rather than throws, when a catch-up check fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockSchedule.mockReturnValue(
+      fakeTask({
+        match: () => {
+          throw new Error('matcher broke');
+        },
+      }),
+    );
+
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+    await flush();
+
+    expect(errSpy).toHaveBeenCalledWith(
+      '[scheduler] Catch-up after start-up failed:',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('remembers the config path it was started with', () => {
+    mockSchedule.mockReturnValue(fakeTask());
+    scheduler.startScheduler('0 4 * * *', '/etc/callsheet.yaml');
+    expect(scheduler.schedulerConfigPath()).toBe('/etc/callsheet.yaml');
+  });
+});
+
+describe('expectedRunDate', () => {
+  let logSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    mockValidate.mockReturnValue(true);
+    mockLoadConfig.mockReturnValue({});
+    // These tests start a scheduler with a real clock; keep its start-up
+    // catch-up out of the way so the outcome cannot depend on the time of day.
+    process.env.CATCHUP_HOURS = '0';
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    delete process.env.CATCHUP_HOURS;
+  });
+
+  it('is null when no scheduler is running', () => {
+    expect(scheduler.expectedRunDate({}, new Date(2026, 9, 14, 9, 0))).toBeNull();
+  });
+
+  it("names today once today's run is past its grace period", () => {
+    mockSchedule.mockReturnValue(fakeTask({ match: at4am }));
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+
+    expect(scheduler.expectedRunDate({}, new Date(2026, 9, 14, 9, 0))).toBe('2026-10-14');
+  });
+
+  it('names yesterday while today is still inside the grace period', () => {
+    mockSchedule.mockReturnValue(fakeTask({ match: at4am }));
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+
+    expect(scheduler.expectedRunDate({}, new Date(2026, 9, 14, 5, 0))).toBe('2026-10-13');
+  });
+
+  it('is null on a vacation day', () => {
+    mockSchedule.mockReturnValue(fakeTask({ match: at4am }));
+    scheduler.startScheduler('0 4 * * *', '/tmp/config.yaml');
+
+    expect(
+      scheduler.expectedRunDate(
+        { vacation: [{ start: '2026-10-14', end: '2026-10-14' }] },
+        new Date(2026, 9, 14, 9, 0),
+      ),
+    ).toBeNull();
+  });
+
+  it('is null when the schedule has not fired in the last day', () => {
+    mockSchedule.mockReturnValue(fakeTask({ match: () => false }));
+    scheduler.startScheduler('0 4 1 1 *', '/tmp/config.yaml');
+
+    expect(scheduler.expectedRunDate({}, new Date(2026, 9, 14, 9, 0))).toBeNull();
   });
 });

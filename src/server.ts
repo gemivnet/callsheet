@@ -14,8 +14,8 @@ import {
   type GoogleAccount,
 } from './connectors/google-auth.js';
 import { getMonthlyUsageData, getUsageSummary } from './usage.js';
-import { isGenerating } from './scheduler.js';
-import { readStatus } from './status.js';
+import { isGenerating, expectedRunDate } from './scheduler.js';
+import { readStatus, evaluateHealth } from './status.js';
 import { todayYmd } from './dates.js';
 import type { CallsheetConfig } from './types.js';
 
@@ -131,6 +131,22 @@ export function createApp(): express.Express {
       generating: isGenerating(),
       last_run: readStatus(getOutputDir()).last ?? null,
     });
+  });
+
+  // Delivery: did the household get its brief? 503 when the last scheduled run
+  // failed to generate or print, or when a due run never happened — the cases
+  // that went unnoticed for weeks while /api/health said "ok". Point an uptime
+  // monitor here.
+  app.get('/api/status', (_req, res) => {
+    let config: CallsheetConfig = {};
+    try {
+      config = loadConfig(getConfigPath());
+    } catch {
+      /* no config: report on the status file alone */
+    }
+    const report = evaluateHealth(readStatus(getOutputDir(config)), expectedRunDate(config));
+    const down = report.state === 'failed' || report.state === 'overdue';
+    res.status(down ? 503 : 200).json({ ...report, generating: isGenerating() });
   });
 
   // ─── Briefs ────────────────────────────────────────────────────────────────
