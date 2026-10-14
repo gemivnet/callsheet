@@ -119,6 +119,11 @@ export function create(config: ConnectorConfig): Connector {
 
     async fetch(): Promise<ConnectorResult> {
       const symbols = (config.symbols as string[]) ?? [];
+      const threshold = (config.move_threshold_pct as number | undefined) ?? 3;
+      const tz =
+        (config.timezone as string | undefined) ??
+        process.env.TZ ??
+        Intl.DateTimeFormat().resolvedOptions().timeZone;
       const results: Record<string, unknown>[] = [];
 
       for (const symbol of symbols) {
@@ -169,6 +174,18 @@ export function create(config: ConnectorConfig): Connector {
               : null;
 
           const range = compute52wRange(closes, current ?? null);
+          // The same flags as of the previous close. "Near the high" is news
+          // the day it becomes true; printing it every day it stays true had
+          // the same line in the Executive Brief for a week at a time.
+          const before =
+            closes.length >= 2 ? compute52wRange(closes.slice(0, -1), closes.at(-2) ?? null) : null;
+          const asOfSeconds = meta.regularMarketTime as number | undefined;
+          const asOf =
+            typeof asOfSeconds === 'number'
+              ? new Intl.DateTimeFormat('en-CA', {
+                  timeZone: tz,
+                }).format(new Date(asOfSeconds * 1000))
+              : null;
 
           // Fetch related news
           const news = await fetchNews(symbol);
@@ -187,6 +204,9 @@ export function create(config: ConnectorConfig): Connector {
             atNear52wHigh: range.atNear52wHigh,
             pctFromLow52w: range.pctFromLow52w,
             atNear52wLow: range.atNear52wLow,
+            newlyNear52wHigh: range.atNear52wHigh && before?.atNear52wHigh === false,
+            newlyNear52wLow: range.atNear52wLow && before?.atNear52wLow === false,
+            priceAsOf: asOf,
             news,
           });
         } catch (e) {
@@ -194,22 +214,30 @@ export function create(config: ConnectorConfig): Connector {
         }
       }
 
-      const anyAth = results.some((r) => r.atNear52wHigh === true);
-      const anyAtl = results.some((r) => r.atNear52wLow === true);
+      const newsworthy = results.filter(
+        (r) =>
+          r.newlyNear52wHigh === true ||
+          r.newlyNear52wLow === true ||
+          Math.abs((r.weekChangePct as number | null) ?? 0) >= threshold,
+      );
 
       return {
         source: 'market',
         description:
           `Market data and news for ${results.length} symbol(s). ` +
-          'Each symbol includes price, daily/weekly change, 52-week high/low, and recent news headlines. ' +
-          '**If `atNear52wHigh: true` for any watched symbol, ALWAYS call it out in the Executive Brief as "at 52-week high" / "at ATH" — do not skip it even if the weekly change is small.** ' +
-          'Same for `atNear52wLow: true` (52-week low). ' +
-          "Surface news in the Executive Brief ONLY if it's genuinely significant — " +
-          'major market moves (>2% weekly), earnings surprises, sector-shaking news, ' +
-          "or anything that could affect the user's holdings. " +
-          'Skip routine analyst upgrades, minor fluctuations, and clickbait headlines.',
+          'Each symbol includes price, daily/weekly change, 52-week high/low, recent headlines, and ' +
+          '`priceAsOf` — the trading day the price is from. ' +
+          (newsworthy.length
+            ? `Possibly newsworthy today: ${newsworthy.map((r) => r.symbol as string).join(', ')}. `
+            : "Nothing here crosses the household's thresholds today — leave markets out of the brief. ") +
+          `Mention a symbol only when its weekly move is at least ${threshold}% either way, or when ` +
+          '`newlyNear52wHigh`/`newlyNear52wLow` is true (it reached the level since the previous close). ' +
+          'Being near a 52-week high on its own is not news, and a move already reported (same ' +
+          '`priceAsOf`, e.g. a Friday move seen again on Monday) is not news either. ' +
+          'Headlines only when genuinely significant to a holding — earnings surprises, sector-shaking ' +
+          'news. Skip routine analyst notes and clickbait.',
         data: { symbols: results },
-        priorityHint: anyAth || anyAtl ? 'normal' : 'low',
+        priorityHint: newsworthy.length ? 'normal' : 'low',
       };
     },
   };

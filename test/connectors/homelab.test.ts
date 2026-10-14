@@ -47,11 +47,13 @@ describe('homelab connector', () => {
       expect(r.description).toContain('which is current');
     });
 
-    it('insists on reporting work that was done, because silence reads as nothing happened', async () => {
+    it('reports overnight work only when the household would notice, and keeps infrastructure off the page', async () => {
       const path = await doc({ severity: 'WARN', action_taken: true, generated_at: hoursAgo(1) });
       const { description } = await create({ path }).fetch();
-      expect(description).toMatch(/at least one line/i);
-      expect(description).not.toMatch(/one line is enough/i);
+      expect(description).toMatch(/only when the household would notice or care/i);
+      expect(description).toMatch(/Routine upkeep .* is not news/i);
+      expect(description).toMatch(/This is a household page/);
+      expect(description).not.toMatch(/at least one line/i);
     });
 
     it('does not imply work happened when none did', async () => {
