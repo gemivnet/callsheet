@@ -42,7 +42,7 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@actual-app/api": "^26.9.0",
+    "@actual-app/api": "^26.10.0",
     "@anthropic-ai/sdk": "0.133.0",
     "@react-pdf/renderer": "^4.9.0",
     "commander": "^13.1.0",
