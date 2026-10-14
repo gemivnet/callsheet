@@ -1242,6 +1242,15 @@ describe('preservePrintedRun', () => {
     ]);
   });
 
+  it('keeps a copy on the first day of run status, when no scheduled run is on record', () => {
+    status(undefined);
+    core.preservePrintedRun('/out', today, 'dashboard');
+    expect(mockCopyFileSync.mock.calls.map((c) => String(c[1]))).toEqual([
+      '/out/callsheet_2026-10-14.printed.json',
+      '/out/connector_data_2026-10-14.printed.json',
+    ]);
+  });
+
   it('does nothing for scheduled runs, other days, error pages, or a failed copy', () => {
     status({ date: today, generated: true });
     core.preservePrintedRun('/out', today, 'catch-up');
@@ -1766,6 +1775,34 @@ describe('generateBrief', () => {
     expect(opts.messages[0].content).toContain('Buy groceries');
     expect(opts.messages[0].content).toContain('[URGENT]');
     expect(opts.messages[0].content).toContain('A quiet day overall');
+  });
+
+  it("diffs against yesterday's printed page when a later preview replaced the brief", async () => {
+    mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(JSON.stringify({ title: 'B', sections: [] })))
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('[]'));
+    const yesterday = shiftYmd(todayYmd(), -1);
+    const page = (label: string) =>
+      JSON.stringify({ title: 'Y', sections: [{ heading: 'Tasks', items: [{ label }] }] });
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const p = String(path);
+      if (p.includes('system.md')) return 'System prompt.';
+      if (p.endsWith(`callsheet_${yesterday}.printed.json`)) return page('Printed in the morning');
+      if (p.endsWith(`callsheet_${yesterday}.json`)) return page('Previewed in the afternoon');
+      return '{}';
+    });
+    mockExistsSync.mockImplementation((path: unknown) =>
+      String(path).includes(`callsheet_${yesterday}`),
+    );
+    mockReaddirSync.mockReturnValue([]);
+
+    await core.generateBrief(minimalConfig, '{}');
+
+    const content = (mockMessagesCreate.mock.calls[0][0] as { messages: { content: string }[] })
+      .messages[0].content;
+    expect(content).toContain('Printed in the morning');
+    expect(content).not.toContain('Previewed in the afternoon');
   });
 
   it('should include household context and extras in prompt', async () => {

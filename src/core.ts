@@ -775,18 +775,22 @@ export async function notify(config: CallsheetConfig, text: string): Promise<voi
 // ---------------------------------------------------------------------------
 
 function loadPreviousBrief(outputDir: string): { brief: Brief; label: string } | null {
-  // Always diff against yesterday — reruns today should act like a fresh first run
+  // Always diff against yesterday — reruns today should act like a fresh first run.
+  // Prefer the copy the scheduled run printed: a later preview replaces
+  // callsheet_DATE.json, but the printed page is the one the household read.
   const dateStr = shiftYmd(todayYmd(), -1);
-  const briefPath = join(outputDir, `callsheet_${dateStr}.json`);
-  try {
-    if (existsSync(briefPath)) {
-      return {
-        brief: JSON.parse(readFileSync(briefPath, 'utf-8')) as Brief,
-        label: 'yesterday',
-      };
+  for (const name of [`callsheet_${dateStr}.printed.json`, `callsheet_${dateStr}.json`]) {
+    const briefPath = join(outputDir, name);
+    try {
+      if (existsSync(briefPath)) {
+        return {
+          brief: JSON.parse(readFileSync(briefPath, 'utf-8')) as Brief,
+          label: 'yesterday',
+        };
+      }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
   }
   return null;
 }
@@ -1480,7 +1484,10 @@ function warningsField(errors: RuntimeError[]): { warnings?: string[] } {
 export function preservePrintedRun(outputDir: string, date: string, trigger: RunTrigger): void {
   if (isScheduledTrigger(trigger)) return;
   const scheduled = readStatus(outputDir).lastScheduled;
-  if (scheduled?.date !== date || !scheduled.generated) return;
+  // With no scheduled run on record at all (the first day on a version that
+  // keeps run status), nothing says whose files these are, and losing the
+  // morning's brief is worse than keeping a copy of an earlier re-run.
+  if (scheduled && (scheduled.date !== date || !scheduled.generated)) return;
   for (const [from, to] of [
     [`callsheet_${date}.json`, `callsheet_${date}.printed.json`],
     [`callsheet_${date}.pdf`, `callsheet_${date}.printed.pdf`],

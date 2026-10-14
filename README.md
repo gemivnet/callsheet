@@ -54,7 +54,7 @@ Sections adapt to the day. Quiet Tuesday? Half-page brief. Packed Thursday befor
 
 **Memory across days:** After each brief, open loops (deliveries, due dates, appointments mentioned only in email) are saved with the date they stop mattering, so the next days can follow them after the email ages out.
 
-**Brief diff:** Yesterday's brief is summarized as context so Claude highlights what's new or changed.
+**Brief diff:** Yesterday's brief is summarized as context so Claude highlights what's new or changed. It is the page that printed: a later re-run or dashboard preview first keeps a copy of the morning's files (`callsheet_DATE.printed.json`), and the diff reads that copy.
 
 **Review before printing:** Executive Brief items that merely restate another section are removed in code, and a fact check compares the brief with the data — a correction is applied only when it quotes both the wrong words and the data that contradicts them, and both quotes check out.
 
