@@ -14,7 +14,7 @@ import {
   type GoogleAccount,
 } from './connectors/google-auth.js';
 import { getMonthlyUsageData, getUsageSummary } from './usage.js';
-import { isGenerating, expectedRunDate } from './scheduler.js';
+import { isGenerating, expectedRunDate, runExclusive } from './scheduler.js';
 import { readStatus, evaluateHealth } from './status.js';
 import { todayYmd } from './dates.js';
 import type { CallsheetConfig } from './types.js';
@@ -155,7 +155,7 @@ export function createApp(): express.Express {
     const outputDir = getOutputDir();
     try {
       const files = readdirSync(outputDir)
-        .filter((f) => f.startsWith('callsheet_') && f.endsWith('.json'))
+        .filter((f) => /^callsheet_\d{4}-\d{2}-\d{2}\.json$/.test(f))
         .sort()
         .reverse();
 
@@ -218,14 +218,15 @@ export function createApp(): express.Express {
   });
 
   app.post('/api/briefs/generate', async (_req, res) => {
-    if (isGenerating()) {
-      res.status(409).json({ error: 'Generation already in progress' });
-      return;
-    }
-
     try {
       const config = loadConfig(getConfigPath());
-      const result = await runPipeline(config, { preview: true, trigger: 'dashboard' });
+      const result = await runExclusive(() =>
+        runPipeline(config, { preview: true, trigger: 'dashboard' }),
+      );
+      if (result === null) {
+        res.status(409).json({ error: 'Generation already in progress' });
+        return;
+      }
 
       res.json({
         success: true,

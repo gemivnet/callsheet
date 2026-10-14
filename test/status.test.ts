@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   readStatus,
   recordRun,
+  updateConnectorStreaks,
   scheduledRunExists,
   evaluateHealth,
   isScheduledTrigger,
@@ -158,5 +159,49 @@ describe('evaluateHealth', () => {
 
   it('treats a skipped print (preview deployment) as ok', () => {
     expect(evaluateHealth({ lastScheduled: run({ print: 'skipped' }) }, null).state).toBe('ok');
+  });
+});
+
+describe('updateConnectorStreaks', () => {
+  it('starts, extends and announces a streak once, and forgets recovered connectors', () => {
+    expect(updateConnectorStreaks(dir, '2026-10-12', ['budget', 'budget'], '2026-10-11')).toEqual(
+      {},
+    );
+    expect(readStatus(dir).connectorStreaks).toEqual({
+      budget: { since: '2026-10-12', last: '2026-10-12', days: 1 },
+    });
+
+    const reached = updateConnectorStreaks(dir, '2026-10-13', ['budget', 'pireps'], '2026-10-12');
+    expect(reached).toEqual({ budget: { since: '2026-10-12', last: '2026-10-13', days: 2 } });
+    // A re-run the same day neither extends nor re-announces it.
+    expect(updateConnectorStreaks(dir, '2026-10-13', ['budget', 'pireps'], '2026-10-12')).toEqual(
+      {},
+    );
+
+    expect(updateConnectorStreaks(dir, '2026-10-14', ['budget'], '2026-10-13')).toEqual({});
+    expect(readStatus(dir).connectorStreaks).toEqual({
+      budget: { since: '2026-10-12', last: '2026-10-14', days: 3 },
+    });
+  });
+
+  it('restarts a streak after a gap', () => {
+    updateConnectorStreaks(dir, '2026-10-01', ['budget'], '2026-09-30');
+    updateConnectorStreaks(dir, '2026-10-05', ['budget'], '2026-10-04');
+    expect(readStatus(dir).connectorStreaks?.budget).toEqual({
+      since: '2026-10-05',
+      last: '2026-10-05',
+      days: 1,
+    });
+  });
+
+  it('never throws when the status cannot be written', () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    chmodSync(dir, 0o500);
+    try {
+      expect(updateConnectorStreaks(dir, '2026-10-01', ['x'], '2026-09-30')).toEqual({});
+    } finally {
+      chmodSync(dir, 0o700);
+      spy.mockRestore();
+    }
   });
 });
