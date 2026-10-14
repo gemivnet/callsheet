@@ -8,6 +8,8 @@ import {
   extractPhraseFromBrief,
   recordBriefPhrase,
   languageLabelPrefix,
+  themeForToday,
+  normalisePhrase,
 } from '../../src/connectors/language.js';
 import { PASS, INFO } from '../../src/test-icons.js';
 import type { Brief } from '../../src/types.js';
@@ -290,5 +292,82 @@ describe('languageLabelPrefix', () => {
       }),
     ).toBe('Français');
     expect(languageLabelPrefix({ connectors: { language: { enabled: true } } })).toBe('Español');
+  });
+});
+
+describe('phrase history across themes', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'callsheet-lang-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("shows every phrase taught on today's theme, beyond the recent window", async () => {
+    const theme = themeForToday();
+    const old = new Date();
+    old.setDate(old.getDate() - 200);
+    writeFileSync(
+      join(dir, 'language_history.json'),
+      JSON.stringify({
+        entries: [
+          { date: old.toISOString().slice(0, 10), phrase: 'Viejo', translation: 'Old', theme },
+          {
+            date: old.toISOString().slice(0, 10),
+            phrase: 'Otro',
+            translation: 'Other',
+            theme: 'x',
+          },
+        ],
+      }),
+    );
+
+    const result = await create({ enabled: true, output_dir: dir }).fetch();
+
+    expect(result.data.past_phrases).toEqual([]);
+    expect(
+      (result.data.past_phrases_on_theme as { phrase: string }[]).map((p) => p.phrase),
+    ).toEqual(['Viejo']);
+    expect(result.description).toContain('past_phrases_on_theme');
+  });
+
+  it('records the theme, keeps a year of history, and notes a repeat', () => {
+    const old = new Date();
+    old.setDate(old.getDate() - 200);
+    writeFileSync(
+      join(dir, 'language_history.json'),
+      JSON.stringify({
+        entries: [
+          { date: old.toISOString().slice(0, 10), phrase: '¡Buenos días!', translation: 'x' },
+        ],
+      }),
+    );
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    recordBriefPhrase(
+      {
+        title: 't',
+        sections: [
+          {
+            heading: 'Executive Brief',
+            items: [{ label: 'Español: "buenos dias" — Good morning' }],
+          },
+        ],
+      },
+      { output_dir: dir, connectors: { language: { enabled: true } } },
+    );
+
+    const history = JSON.parse(readFileSync(join(dir, 'language_history.json'), 'utf-8')) as {
+      entries: { phrase: string; theme?: string }[];
+    };
+    expect(history.entries).toHaveLength(2);
+    expect(history.entries[1].theme).toBe(themeForToday());
+    expect(
+      logSpy.mock.calls.map((c) => String(c[0])).some((l) => l.includes('repeats the one from')),
+    ).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it('normalises phrases for repeat checks', () => {
+    expect(normalisePhrase('¡Buenos  días!')).toBe('buenos dias');
   });
 });
