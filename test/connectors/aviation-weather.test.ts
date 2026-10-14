@@ -6,9 +6,19 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-const { create, validate, nmDistance, pointInPolygon, computeDensityAltitude } = await import(
-  '../../src/connectors/aviation-weather.js'
-);
+const {
+  create,
+  validate,
+  nmDistance,
+  pointInPolygon,
+  computeDensityAltitude,
+  parseVisibility,
+  ceilingFrom,
+  flightCategory,
+  parseTafPeriods,
+  worstCategory,
+  pirepAnchor,
+} = await import('../../src/connectors/aviation-weather.js');
 const { PASS, FAIL, WARN, INFO } = await import('../../src/test-icons.js');
 
 /**
@@ -110,6 +120,139 @@ describe('aviation-weather helpers', () => {
   });
 });
 
+describe('flight category helpers', () => {
+  describe('parseVisibility', () => {
+    it('reads numbers and the API\'s "more than" strings', () => {
+      expect(parseVisibility(7)).toBe(7);
+      expect(parseVisibility('10+')).toBe(10);
+      expect(parseVisibility('6+')).toBe(6);
+      expect(parseVisibility('P6SM')).toBe(6);
+    });
+
+    it('reads fractions, mixed numbers and "less than"', () => {
+      expect(parseVisibility('1/2')).toBe(0.5);
+      expect(parseVisibility('1 1/2')).toBe(1.5);
+      expect(parseVisibility('M1/4')).toBe(0.25);
+      expect(parseVisibility('3SM')).toBe(3);
+    });
+
+    it('returns undefined for anything else', () => {
+      expect(parseVisibility(undefined)).toBeUndefined();
+      expect(parseVisibility(null)).toBeUndefined();
+      expect(parseVisibility('')).toBeUndefined();
+      expect(parseVisibility('n/a')).toBeUndefined();
+      expect(parseVisibility(Number.NaN)).toBeUndefined();
+    });
+  });
+
+  describe('ceilingFrom', () => {
+    it('is the lowest broken or overcast base', () => {
+      expect(
+        ceilingFrom([
+          { cover: 'FEW', base: 800 },
+          { cover: 'BKN', base: 2500 },
+          { cover: 'OVC', base: 1800 },
+        ]),
+      ).toBe(1800);
+    });
+
+    it('is null when no layer forms a ceiling', () => {
+      expect(ceilingFrom([{ cover: 'SCT', base: 900 }])).toBeNull();
+      expect(ceilingFrom([])).toBeNull();
+    });
+
+    it('uses vertical visibility when present', () => {
+      expect(ceilingFrom([], 200)).toBe(200);
+      expect(ceilingFrom([{ cover: 'VV', base: 100 }])).toBe(100);
+    });
+
+    it('is undefined when the report says nothing about clouds', () => {
+      expect(ceilingFrom(undefined)).toBeUndefined();
+    });
+
+    it('ignores malformed layers', () => {
+      expect(ceilingFrom([{ cover: 'BKN' }, { cover: 7, base: 100 }, null])).toBeNull();
+    });
+  });
+
+  describe('flightCategory', () => {
+    it('applies the FAA thresholds at their boundaries', () => {
+      expect(flightCategory(499, 10).category).toBe('LIFR');
+      expect(flightCategory(500, 10).category).toBe('IFR');
+      expect(flightCategory(999, 10).category).toBe('IFR');
+      expect(flightCategory(1000, 10).category).toBe('MVFR');
+      expect(flightCategory(3000, 10).category).toBe('MVFR');
+      expect(flightCategory(3100, 10).category).toBe('VFR');
+      expect(flightCategory(null, 0.75).category).toBe('LIFR');
+      expect(flightCategory(null, 2).category).toBe('IFR');
+      expect(flightCategory(null, 5).category).toBe('MVFR');
+      expect(flightCategory(null, 6).category).toBe('VFR');
+    });
+
+    it('never calls it VFR when an element is unknown', () => {
+      expect(flightCategory(undefined, 10)).toEqual({ basis: 'visibility only' });
+      expect(flightCategory(5000, undefined)).toEqual({ basis: 'ceiling only' });
+      expect(flightCategory(undefined, undefined)).toEqual({});
+    });
+
+    it('still reports bad weather from a single known element', () => {
+      expect(flightCategory(undefined, 2)).toEqual({ category: 'IFR', basis: 'visibility only' });
+      expect(flightCategory(400, undefined)).toEqual({ category: 'LIFR', basis: 'ceiling only' });
+    });
+  });
+
+  describe('parseTafPeriods', () => {
+    it('returns nothing for a TAF without periods', () => {
+      expect(parseTafPeriods({})).toEqual([]);
+    });
+
+    it('decodes low-level wind shear', () => {
+      const [p] = parseTafPeriods({
+        fcsts: [
+          {
+            fcstChange: 'FM',
+            visib: '6+',
+            clouds: [],
+            wshearHgt: 20,
+            wshearDir: 270,
+            wshearSpd: 45,
+          },
+          { fcstChange: 'FM', visib: '6+', clouds: [], wshearHgt: 20, wshearSpd: 40 },
+        ],
+      });
+      expect(p.windShear).toBe('2000 ft 270° 45 kt');
+    });
+
+    it('omits wind shear when the TAF has none', () => {
+      const [p] = parseTafPeriods({ fcsts: [{ visib: '6+', clouds: [] }] });
+      expect(p.windShear).toBeUndefined();
+      expect(p.flightCategory).toBe('VFR');
+    });
+  });
+
+  describe('worstCategory', () => {
+    it('picks the worst classified period', () => {
+      expect(worstCategory([{ flightCategory: 'VFR' }, { flightCategory: 'IFR' }, {}])).toBe('IFR');
+    });
+
+    it('says unknown rather than VFR when nothing could be classified', () => {
+      expect(worstCategory([{}, {}])).toBe('unknown');
+      expect(worstCategory([])).toBe('unknown');
+    });
+  });
+
+  describe('pirepAnchor', () => {
+    it('skips identifiers the PIREP endpoint rejects', () => {
+      expect(pirepAnchor(['9X9', 'KABC', 'KDEF'])).toBe('KABC');
+    });
+
+    it('falls back to the first station when none is ICAO-shaped', () => {
+      expect(pirepAnchor(['9X9'])).toBe('9X9');
+      expect(pirepAnchor([])).toBeUndefined();
+    });
+  });
+});
+
 describe('aviation-weather connector', () => {
   describe('create', () => {
     it('has the correct name', () => {
@@ -125,6 +268,11 @@ describe('aviation-weather connector', () => {
       expect(result.priorityHint).toBe('low');
     });
 
+    // Fixtures follow the shape aviationweather.gov actually returns, recorded
+    // from live responses: `fltCat` (not `fltcat`), a `clouds` array (there is
+    // no `ceil` field), and visibilities that are sometimes strings like "10+".
+    // The old fixtures used the field names the code assumed, which is how a
+    // connector that could not read a single ceiling passed its tests.
     it('fetches METAR and TAF data', async () => {
       mockFetch({
         '/metar': [
@@ -135,9 +283,10 @@ describe('aviation-weather connector', () => {
             dewp: 6,
             wdir: 210,
             wspd: 10,
-            visib: 10,
+            visib: '10+',
+            clouds: [{ cover: 'SCT', base: 25000 }],
             altim: 1020,
-            fltcat: 'VFR',
+            fltCat: 'VFR',
           },
         ],
         '/taf': [
@@ -151,10 +300,10 @@ describe('aviation-weather connector', () => {
                 fcstChange: 'FM',
                 wdir: 210,
                 wspd: 12,
-                visib: 10,
-                ceil: 5000,
-                wxString: '',
-                raw: 'FM251200 21012KT P6SM SKC',
+                visib: '6+',
+                clouds: [{ cover: 'BKN', base: 5000, type: null }],
+                wxString: null,
+                raw: 'FM251200 21012KT P6SM BKN050',
               },
               {
                 timeFrom: EPOCH_NOW + 3600,
@@ -164,9 +313,9 @@ describe('aviation-weather connector', () => {
                 wspd: 15,
                 wgst: 25,
                 visib: 3,
-                ceil: 800,
+                clouds: [{ cover: 'BKN', base: 1500, type: null }],
                 wxString: '-RA',
-                raw: 'TEMPO 2513/2516 25015G25KT 3SM -RA BKN008',
+                raw: 'TEMPO 2513/2516 25015G25KT 3SM -RA BKN015',
               },
             ],
           },
@@ -183,19 +332,33 @@ describe('aviation-weather connector', () => {
       expect(metars).toHaveLength(1);
       expect(metars[0].station).toBe('KJFK');
       expect(metars[0].flightCategory).toBe('VFR');
+      expect(metars[0].visibilityMi).toBe(10);
+      expect(metars[0].ceiling).toBeNull();
 
       const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
       expect(tafs).toHaveLength(1);
       expect(tafs[0].periods).toHaveLength(2);
       expect(tafs[0].periods[0].flightCategory).toBe('VFR');
+      expect(tafs[0].periods[0].ceiling).toBe(5000);
       expect(tafs[0].periods[0].type).toBe('from');
       expect(tafs[0].periods[1].flightCategory).toBe('MVFR');
       expect(tafs[0].periods[1].type).toBe('tempo');
       expect(tafs[0].periods[1].weather).toBe('-RA');
+      expect(result.description).toContain('Current: KJFK VFR');
+      expect(result.description).toContain('KJFK forecast worst: MVFR');
     });
 
-    it('classifies IFR and LIFR flight categories correctly', async () => {
+    it('classifies a low overcast with good visibility as IFR, not VFR', async () => {
       mockFetch({
+        '/metar': [
+          {
+            icaoId: 'KJFK',
+            rawOb: 'KJFK 251156Z 00000KT 10SM OVC006 12/11 A3001',
+            visib: '10+',
+            clouds: [{ cover: 'OVC', base: 600 }],
+            fltCat: null,
+          },
+        ],
         '/taf': [
           {
             icaoId: 'KJFK',
@@ -204,20 +367,58 @@ describe('aviation-weather connector', () => {
               {
                 timeFrom: EPOCH_NOW,
                 timeTo: EPOCH_NOW + 3600,
-                fcstChange: 'FM',
-                visib: 2,
-                ceil: 400,
-                wxString: 'BR',
-                raw: 'FM test IFR',
+                fcstChange: null,
+                visib: '6+',
+                clouds: [{ cover: 'OVC', base: 400, type: null }],
+                raw: 'P6SM OVC004',
               },
               {
                 timeFrom: EPOCH_NOW,
                 timeTo: EPOCH_NOW + 3600,
                 fcstChange: 'BECMG',
                 visib: 0.5,
-                ceil: 150,
+                clouds: [{ cover: 'VV', base: 100, type: null }],
                 wxString: 'FG',
-                raw: 'BECMG test LIFR',
+                raw: 'BECMG 1/2SM FG VV001',
+              },
+            ],
+          },
+        ],
+      });
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+      const metars = result.data.metars as Record<string, unknown>[];
+      const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
+      // No fltCat from the API: computed from the 600 ft overcast.
+      expect(metars[0].flightCategory).toBe('IFR');
+      expect(tafs[0].periods[0].flightCategory).toBe('LIFR');
+      expect(tafs[0].periods[1].flightCategory).toBe('LIFR');
+      expect(tafs[0].periods[1].type).toBe('becmg');
+      expect(result.description).toContain('KJFK forecast worst: LIFR');
+    });
+
+    it('fills a TEMPO group from the prevailing conditions it does not mention', async () => {
+      mockFetch({
+        '/taf': [
+          {
+            icaoId: 'KJFK',
+            rawTAF: 'TAF test',
+            fcsts: [
+              {
+                timeFrom: EPOCH_NOW,
+                timeTo: EPOCH_NOW + 7200,
+                fcstChange: 'FM',
+                visib: '6+',
+                clouds: [{ cover: 'OVC', base: 800, type: null }],
+                raw: 'FM P6SM OVC008',
+              },
+              {
+                timeFrom: EPOCH_NOW,
+                timeTo: EPOCH_NOW + 3600,
+                fcstChange: 'TEMPO',
+                visib: 4,
+                raw: 'TEMPO 4SM -SHRA',
               },
             ],
           },
@@ -227,9 +428,9 @@ describe('aviation-weather connector', () => {
       const conn = create({ enabled: true, stations: ['KJFK'] });
       const result = await conn.fetch();
       const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
-      expect(tafs[0].periods[0].flightCategory).toBe('IFR');
-      expect(tafs[0].periods[1].flightCategory).toBe('LIFR');
-      expect(tafs[0].periods[1].type).toBe('becmg');
+      // The TEMPO changes visibility only; the 800 ft overcast still applies.
+      expect(tafs[0].periods[1].ceiling).toBe(800);
+      expect(tafs[0].periods[1].flightCategory).toBe('IFR');
     });
 
     it('handles PROB change type in TAF', async () => {
@@ -244,7 +445,7 @@ describe('aviation-weather connector', () => {
                 timeTo: EPOCH_NOW + 3600,
                 fcstChange: 'PROB30',
                 visib: 6,
-                ceil: 3000,
+                clouds: [{ cover: 'BKN', base: 3000 }],
                 wxString: '-RA',
                 raw: 'PROB30 test',
               },
@@ -256,6 +457,53 @@ describe('aviation-weather connector', () => {
       const result = await conn.fetch();
       const tafs = result.data.tafs as { periods: Record<string, unknown>[] }[];
       expect(tafs[0].periods[0].type).toBe('prob');
+      // A 3,000 ft ceiling is MVFR (at or below 3,000), not VFR.
+      expect(tafs[0].periods[0].flightCategory).toBe('MVFR');
+    });
+
+    it('reports a product that failed, instead of reading it as quiet', async () => {
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        const u = url.toString();
+        if (u.includes('/pirep')) {
+          return Promise.resolve({ ok: false, status: 400, text: () => Promise.resolve('') });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+      }) as typeof fetch);
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      const conn = create({ enabled: true, stations: ['KJFK'] });
+      const result = await conn.fetch();
+
+      expect(result.data.unavailable).toEqual([expect.stringMatching(/^PIREPs: .*400/)]);
+      expect(result.description).toContain('UNAVAILABLE this run');
+      logSpy.mockRestore();
+    });
+
+    it('anchors the PIREP search on an ICAO station, and names fields with no reports', async () => {
+      const urls: string[] = [];
+      globalThis.fetch = jest.fn(((url: string | URL | Request) => {
+        urls.push(url.toString());
+        if (url.toString().includes('/metar')) {
+          return Promise.resolve({
+            ok: true,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify([
+                  { icaoId: 'KJFK', rawOb: 'x', visib: 10, clouds: [], fltCat: 'VFR' },
+                ]),
+              ),
+          });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+      }) as typeof fetch);
+
+      const conn = create({ enabled: true, stations: ['9X9', 'KJFK'] });
+      const result = await conn.fetch();
+
+      expect(urls.find((u) => u.includes('/pirep'))).toContain('id=KJFK');
+      expect(result.data.stationsWithoutReports).toEqual(['9X9']);
+      expect(result.description).toContain('No METAR or TAF at all for 9X9');
+      expect(result.description).toContain('KJFK report observations but issue no TAF');
     });
 
     it('degrades gracefully when fetch throws (network error path)', async () => {
@@ -317,7 +565,10 @@ describe('aviation-weather connector', () => {
         const urlStr = url.toString();
         if (urlStr.includes('/metar')) {
           // Non-empty, non-JSON — distinct from the quiet-null case above.
-          return Promise.resolve({ ok: true, text: () => Promise.resolve('<html>500 error</html>') });
+          return Promise.resolve({
+            ok: true,
+            text: () => Promise.resolve('<html>500 error</html>'),
+          });
         }
         return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
       }) as typeof fetch);
@@ -338,7 +589,11 @@ describe('aviation-weather connector', () => {
         if (urlStr.includes('/metar')) {
           return Promise.resolve({ ok: false, status: 503 });
         }
-        return Promise.resolve({ ok: true, json: () => Promise.resolve([]), text: () => Promise.resolve('') });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+          text: () => Promise.resolve(''),
+        });
       }) as typeof fetch);
 
       const conn = create({ enabled: true, stations: ['KJFK'] });
@@ -354,13 +609,15 @@ describe('aviation-weather connector', () => {
 
     it('converts station elevation from meters to feet', async () => {
       mockFetch({
-        '/stationinfo': [
-          { icaoId: 'KJFK', site: 'JFK INTL', lat: 40.64, lon: -73.78, elev: 4 },
-        ],
+        '/stationinfo': [{ icaoId: 'KJFK', site: 'JFK INTL', lat: 40.64, lon: -73.78, elev: 4 }],
       });
       const conn = create({ enabled: true, stations: ['KJFK'] });
       const result = await conn.fetch();
-      const info = result.data.stationInfo as { station?: string; icaoId?: string; elevFt: number }[];
+      const info = result.data.stationInfo as {
+        station?: string;
+        icaoId?: string;
+        elevFt: number;
+      }[];
       expect(info).toHaveLength(1);
       // 4 m × 3.28084 ≈ 13.12 → rounds to 13
       expect(info[0].elevFt).toBe(13);
@@ -447,7 +704,11 @@ describe('aviation-weather connector', () => {
 
       const conn = create({ enabled: true, stations: ['KJFK'] });
       const result = await conn.fetch();
-      const hazards = result.data.airSigmets as { type: string; hazard: string; affectedStations: string[] }[];
+      const hazards = result.data.airSigmets as {
+        type: string;
+        hazard: string;
+        affectedStations: string[];
+      }[];
       expect(hazards).toHaveLength(1);
       expect(hazards[0].type).toBe('SIGMET');
       expect(hazards[0].hazard).toBe('CONVECTIVE');
@@ -466,10 +727,34 @@ describe('aviation-weather connector', () => {
       // 3 forecast hours for the same hazard/product + 1 different one.
       // The sierra endpoint returns the mock body; tango/zulu default to [].
       const gAirmets = [
-        { hazard: 'IFR', product: 'sierra', forecastHour: 0, validTime: '2026-04-11T12:00', coords: polygon },
-        { hazard: 'IFR', product: 'sierra', forecastHour: 3, validTime: '2026-04-11T15:00', coords: polygon },
-        { hazard: 'IFR', product: 'sierra', forecastHour: 6, validTime: '2026-04-11T18:00', coords: polygon },
-        { hazard: 'MTN OBSC', product: 'sierra', forecastHour: 0, validTime: '2026-04-11T12:00', coords: polygon },
+        {
+          hazard: 'IFR',
+          product: 'sierra',
+          forecastHour: 0,
+          validTime: '2026-04-11T12:00',
+          coords: polygon,
+        },
+        {
+          hazard: 'IFR',
+          product: 'sierra',
+          forecastHour: 3,
+          validTime: '2026-04-11T15:00',
+          coords: polygon,
+        },
+        {
+          hazard: 'IFR',
+          product: 'sierra',
+          forecastHour: 6,
+          validTime: '2026-04-11T18:00',
+          coords: polygon,
+        },
+        {
+          hazard: 'MTN OBSC',
+          product: 'sierra',
+          forecastHour: 0,
+          validTime: '2026-04-11T12:00',
+          coords: polygon,
+        },
       ];
       mockFetch({
         '/stationinfo': [{ icaoId: 'KJFK', site: 'JFK', lat: 40, lon: -74, elev: 0 }],
@@ -523,7 +808,7 @@ describe('aviation-weather connector', () => {
             rawOb: 'test',
             temp: 30,
             altim: 1013.25, // ~29.92 inHg
-            fltcat: 'VFR',
+            fltCat: 'VFR',
           },
         ],
         '/stationinfo': [{ icaoId: 'KJFK', site: 'JFK', lat: 40, lon: -74, elev: 305 }], // ~1000 ft
@@ -595,9 +880,9 @@ describe('aviation-weather connector', () => {
     it('surfaces wfo override as INFO without warning', () => {
       const checks = validate({ enabled: true, stations: ['LFPG'], wfo: 'KLOT' });
       expect(checks.some(([icon]) => icon === WARN)).toBe(false);
-      expect(checks.some(([icon, msg]) => icon === INFO && String(msg).includes('WFO override'))).toBe(
-        true,
-      );
+      expect(
+        checks.some(([icon, msg]) => icon === INFO && String(msg).includes('WFO override')),
+      ).toBe(true);
     });
 
     it('surfaces pirep_radius_nm override as INFO', () => {

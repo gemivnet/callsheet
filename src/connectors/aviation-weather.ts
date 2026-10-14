@@ -40,10 +40,112 @@ interface TafPeriod {
   windSpeedKt?: number;
   windGustKt?: number;
   visibilityMi?: number;
-  ceiling?: number;
-  flightCategory?: string;
+  /** Lowest broken/overcast base (ft AGL); null when there is no ceiling. */
+  ceiling?: number | null;
+  flightCategory?: FlightCategory;
+  /** Which elements the category rests on. Never VFR unless both are known. */
+  categoryBasis?: CategoryBasis;
+  /** Low-level wind shear, e.g. "2000 ft 270° 45 kt". */
+  windShear?: string;
   weather?: string;
   raw: string;
+}
+
+export type FlightCategory = 'VFR' | 'MVFR' | 'IFR' | 'LIFR';
+export type CategoryBasis = 'ceiling+visibility' | 'visibility only' | 'ceiling only';
+
+/**
+ * Visibility in statute miles from an aviationweather.gov value.
+ *
+ * The API sends numbers for some reports and strings for others: "10+" and
+ * "6+" (more than), fractions like "1/2" or "1 1/2", and "M1/4" (less than).
+ * Reading these with a plain cast is how every visibility silently became
+ * undefined.
+ */
+export function parseVisibility(v: unknown): number | undefined {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v !== 'string') return undefined;
+  const s = v
+    .trim()
+    .toUpperCase()
+    .replace(/SM$/, '')
+    .replace(/^[PM]/, '')
+    .replace(/\+$/, '')
+    .trim();
+  const mixed = /^(\d+)\s+(\d+)\/(\d+)$/.exec(s);
+  if (mixed) return Number(mixed[1]) + Number(mixed[2]) / Number(mixed[3]);
+  const frac = /^(\d+)\/(\d+)$/.exec(s);
+  if (frac) return Number(frac[1]) / Number(frac[2]);
+  if (!/^\d+(\.\d+)?$/.test(s)) return undefined;
+  return Number(s);
+}
+
+/**
+ * Ceiling in feet AGL: the lowest broken or overcast layer, or a vertical
+ * visibility. Returns null when the sky has no ceiling (clear, few,
+ * scattered) and undefined when the report says nothing about clouds.
+ *
+ * The API has no ceiling field. The connector used to read `ceil`, which does
+ * not exist, so every TAF was classified on visibility alone — a 400 ft
+ * overcast with good visibility came out as VFR.
+ */
+export function ceilingFrom(clouds: unknown, vertVis?: unknown): number | null | undefined {
+  if (typeof vertVis === 'number' && Number.isFinite(vertVis)) return vertVis;
+  if (!Array.isArray(clouds)) return undefined;
+  let lowest: number | null = null;
+  for (const layer of clouds as { cover?: unknown; base?: unknown }[]) {
+    const cover = typeof layer?.cover === 'string' ? layer.cover.toUpperCase() : '';
+    if (cover !== 'BKN' && cover !== 'OVC' && cover !== 'OVX' && cover !== 'VV') continue;
+    if (typeof layer.base === 'number' && (lowest === null || layer.base < lowest)) {
+      lowest = layer.base;
+    }
+  }
+  return lowest;
+}
+
+/**
+ * FAA flight category from ceiling and visibility.
+ *
+ *   LIFR  ceiling < 500 ft   or visibility < 1 SM
+ *   IFR   ceiling < 1,000 ft or visibility < 3 SM
+ *   MVFR  ceiling ≤ 3,000 ft or visibility ≤ 5 SM
+ *   VFR   otherwise
+ *
+ * The previous thresholds were each one category too lenient (MVFR started
+ * below 1,000 ft). An element that is unknown never counts as good weather:
+ * the result is VFR only when both ceiling and visibility are known.
+ */
+export function flightCategory(
+  ceilingFt: number | null | undefined,
+  visMi: number | undefined,
+): { category?: FlightCategory; basis?: CategoryBasis } {
+  const ceilingKnown = ceilingFt !== undefined;
+  const visKnown = visMi !== undefined;
+  if (!ceilingKnown && !visKnown) return {};
+  const ceil = ceilingFt ?? Infinity;
+  const vis = visMi ?? Infinity;
+
+  let category: FlightCategory;
+  if (ceil < 500 || vis < 1) category = 'LIFR';
+  else if (ceil < 1000 || vis < 3) category = 'IFR';
+  else if (ceil <= 3000 || vis <= 5) category = 'MVFR';
+  else category = 'VFR';
+
+  const basis: CategoryBasis =
+    ceilingKnown && visKnown ? 'ceiling+visibility' : visKnown ? 'visibility only' : 'ceiling only';
+  if (category === 'VFR' && basis !== 'ceiling+visibility') return { basis };
+  return { category, basis };
+}
+
+/** "2000 ft 270° 45 kt" from a TAF period's wind-shear fields. */
+function describeWindShear(f: Record<string, unknown>): string | undefined {
+  const hgt = f.wshearHgt;
+  const dir = f.wshearDir;
+  const spd = f.wshearSpd;
+  if (typeof hgt !== 'number' || typeof spd !== 'number') return undefined;
+  // The API reports the height in hundreds of feet, as coded in the TAF (WS020).
+  const feet = hgt < 100 ? hgt * 100 : hgt;
+  return `${feet} ft ${typeof dir === 'number' ? `${dir}° ` : ''}${spd} kt`;
 }
 
 interface StationInfo {
@@ -106,27 +208,30 @@ interface DensityAltitudeReport {
  * Parse the aviationweather.gov JSON TAF response into structured periods.
  * The API returns TAF objects with a `fcsts` array of forecast periods.
  */
-function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
+export function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
   const fcsts = taf.fcsts as Record<string, unknown>[] | undefined;
   if (!fcsts?.length) return [];
 
-  return fcsts.map((f) => {
-    // Determine flight category from ceiling and visibility
-    const ceil = f.ceil as number | undefined;
-    const vis = f.visib as number | undefined;
-    let flightCategory: string | undefined;
+  // TEMPO, PROB and BECMG groups list only the elements that change. Anything
+  // they leave out continues from the prevailing (initial or FM) conditions,
+  // so carry those forward rather than judging a group on half its weather.
+  let prevailingVis: number | undefined;
+  let prevailingCeil: number | null | undefined;
 
-    if (ceil !== undefined || vis !== undefined) {
-      if ((ceil !== undefined && ceil < 200) || (vis !== undefined && vis < 1)) {
-        flightCategory = 'LIFR';
-      } else if ((ceil !== undefined && ceil < 500) || (vis !== undefined && vis < 3)) {
-        flightCategory = 'IFR';
-      } else if ((ceil !== undefined && ceil < 1000) || (vis !== undefined && vis < 5)) {
-        flightCategory = 'MVFR';
-      } else {
-        flightCategory = 'VFR';
-      }
+  return fcsts.map((f) => {
+    const changeType = (f.fcstChange as string | null | undefined) ?? '';
+    const isTemporary = /^(TEMPO|PROB|BECMG)/.test(changeType);
+
+    let vis = parseVisibility(f.visib);
+    let ceil = ceilingFrom(f.clouds, f.vertVis);
+    if (isTemporary) {
+      vis ??= prevailingVis;
+      if (ceil === undefined) ceil = prevailingCeil;
+    } else {
+      prevailingVis = vis ?? prevailingVis;
+      prevailingCeil = ceil === undefined ? prevailingCeil : ceil;
     }
+    const cat = flightCategory(ceil, vis);
 
     // Format times as readable strings
     const timeFrom = f.timeFrom as number | undefined;
@@ -152,13 +257,12 @@ function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
 
     // Determine period type
     let type: TafPeriod['type'] = 'from';
-    const changeType = (f.fcstChange as string) ?? '';
     if (changeType.startsWith('TEMPO')) type = 'tempo';
     else if (changeType.startsWith('BECMG')) type = 'becmg';
     else if (changeType.startsWith('PROB')) type = 'prob';
 
     // Collect weather phenomena
-    const wxString = (f.wxString as string) ?? '';
+    const wxString = (f.wxString as string | null | undefined) ?? '';
 
     return {
       from: fromStr,
@@ -169,11 +273,41 @@ function parseTafPeriods(taf: Record<string, unknown>): TafPeriod[] {
       windGustKt: f.wgst as number | undefined,
       visibilityMi: vis,
       ceiling: ceil,
-      flightCategory,
+      flightCategory: cat.category,
+      categoryBasis: cat.basis,
+      windShear: describeWindShear(f),
       weather: wxString || undefined,
-      raw: (f.raw as string) ?? '',
+      raw: (f.raw as string | undefined) ?? '',
     };
   });
+}
+
+/** Rank of a flight category, worst first; unknown sorts after VFR. */
+const CATEGORY_RANK: Record<FlightCategory, number> = { LIFR: 0, IFR: 1, MVFR: 2, VFR: 3 };
+
+/**
+ * The worst forecast category across a TAF's periods, or "unknown" when no
+ * period could be classified. The old summary started from "VFR" and treated
+ * anything unclassified as VFR, so a TAF it could not read reported clear
+ * skies.
+ */
+export function worstCategory(periods: { flightCategory?: FlightCategory }[]): string {
+  let worst: FlightCategory | undefined;
+  for (const p of periods) {
+    if (!p.flightCategory) continue;
+    if (!worst || CATEGORY_RANK[p.flightCategory] < CATEGORY_RANK[worst]) worst = p.flightCategory;
+  }
+  return worst ?? 'unknown';
+}
+
+/**
+ * The station to anchor the PIREP search on. The endpoint needs a location it
+ * can resolve; an FAA-only identifier (three characters, or a digit-bearing
+ * field code) is rejected with HTTP 400 "Invalid location specified", so the
+ * first four-letter ICAO identifier is used instead.
+ */
+export function pirepAnchor(stations: string[]): string | undefined {
+  return stations.find((s) => /^[A-Z]{4}$/.test(s)) ?? stations[0];
 }
 
 /** How many retry attempts AWC endpoints get — the site 502s during heavy updates. */
@@ -200,7 +334,11 @@ function awcOnRetry(label: string): (attempt: number, err: unknown, delayMs: num
  * valid nothing-to-report response, not a failure — treat it as null
  * silently. Real errors are still logged for diagnosis.
  */
-async function safeFetchJson<T>(url: string, label: string): Promise<T | null> {
+async function safeFetchJson<T>(
+  url: string,
+  label: string,
+  failures?: string[],
+): Promise<T | null> {
   try {
     const body = await retry(
       async () => {
@@ -222,16 +360,22 @@ async function safeFetchJson<T>(url: string, label: string): Promise<T | null> {
     } catch (parseErr) {
       const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       console.log(`  aviation_weather: ${label} returned unparseable JSON: ${msg}`);
+      failures?.push(`${label}: unparseable response`);
       return null;
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`  aviation_weather: ${label} failed after retries: ${msg}`);
+    failures?.push(`${label}: ${msg}`);
     return null;
   }
 }
 
-async function safeFetchText(url: string, label: string): Promise<string | null> {
+async function safeFetchText(
+  url: string,
+  label: string,
+  failures?: string[],
+): Promise<string | null> {
   try {
     return await retry(
       async () => {
@@ -250,6 +394,7 @@ async function safeFetchText(url: string, label: string): Promise<string | null>
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`  aviation_weather: ${label} failed after retries: ${msg}`);
+    failures?.push(`${label}: ${msg}`);
     return null;
   }
 }
@@ -391,6 +536,11 @@ export function create(config: ConnectorConfig): Connector {
       // to, which is what a hardcoded default did.
       const afdStation =
         (config.wfo as string | undefined) ?? stations.find((s) => /^K[A-Z]{3}$/.test(s));
+      // Products that could not be fetched this run. Reported in the payload:
+      // a failed product used to look exactly like a quiet one (PIREPs read as
+      // "0 recent" for weeks while every request was a 400).
+      const unavailable: string[] = [];
+      const pirepStation = pirepAnchor(stations);
 
       // Fire all endpoints in parallel. Each is wrapped in safeFetch* so any
       // single failure degrades that one product without breaking the whole
@@ -409,34 +559,44 @@ export function create(config: ConnectorConfig): Connector {
         safeFetchJson<Record<string, unknown>[]>(
           `${AWC_API}/metar?ids=${encodeURIComponent(stationStr)}&format=json`,
           'METAR',
+          unavailable,
         ),
         safeFetchJson<Record<string, unknown>[]>(
           `${AWC_API}/taf?ids=${encodeURIComponent(stationStr)}&format=json`,
           'TAF',
+          unavailable,
         ),
         safeFetchJson<Record<string, unknown>[]>(
           `${AWC_API}/stationinfo?ids=${encodeURIComponent(stationStr)}&format=json`,
           'stationinfo',
+          unavailable,
         ),
         safeFetchJson<Record<string, unknown>[]>(
-          `${AWC_API}/pirep?id=${encodeURIComponent(stations[0])}` +
+          `${AWC_API}/pirep?id=${encodeURIComponent(pirepStation ?? stations[0])}` +
             `&distance=${pirepRadius}&age=${pirepAge}&format=json`,
           'PIREPs',
+          unavailable,
         ),
-        safeFetchJson<Record<string, unknown>[]>(`${AWC_API}/airsigmet?format=json`, 'AIRSIGMET'),
+        safeFetchJson<Record<string, unknown>[]>(
+          `${AWC_API}/airsigmet?format=json`,
+          'AIRSIGMET',
+          unavailable,
+        ),
         Promise.all(
           GAIRMET_TYPES.map((t) =>
             safeFetchJson<Record<string, unknown>[]>(
               `${AWC_API}/gairmet?format=json&type=${t}`,
               `G-AIRMET ${t}`,
+              unavailable,
             ),
           ),
         ),
-        safeFetchJson<Record<string, unknown>[]>(`${AWC_API}/cwa?format=json`, 'CWA'),
+        safeFetchJson<Record<string, unknown>[]>(`${AWC_API}/cwa?format=json`, 'CWA', unavailable),
         afdStation
           ? safeFetchText(
               `${AWC_API}/fcstdisc?cwa=${encodeURIComponent(afdStation)}&type=afd`,
               'AFD',
+              unavailable,
             )
           : Promise.resolve(null),
       ]);
@@ -446,19 +606,28 @@ export function create(config: ConnectorConfig): Connector {
       const metars = metarRaw ?? [];
       const tafs = tafRaw ?? [];
 
-      const metarData = metars.map((m) => ({
-        station: (m.icaoId as string) ?? '',
-        raw: (m.rawOb as string) ?? '',
-        tempC: m.temp as number | undefined,
-        dewpointC: m.dewp as number | undefined,
-        windDir: m.wdir as number | string | undefined,
-        windSpeedKt: m.wspd as number | undefined,
-        windGustKt: m.wgst as number | undefined,
-        visibilityMi: m.visib as number | string | undefined,
-        ceiling: m.ceil as number | undefined,
-        altimeterInHg: altimMbToInHg(m.altim as number | undefined),
-        flightCategory: (m.fltcat as string) ?? '',
-      }));
+      const metarData = metars.map((m) => {
+        const visibilityMi = parseVisibility(m.visib);
+        const ceiling = ceilingFrom(m.clouds, m.vertVis);
+        // The API sends its own category as `fltCat`; the connector read
+        // `fltcat`, so every observation came through blank and every brief
+        // said "Current: unknown". Prefer the API's value, compute otherwise.
+        const reported = typeof m.fltCat === 'string' && m.fltCat ? m.fltCat : undefined;
+        const computed = flightCategory(ceiling, visibilityMi);
+        return {
+          station: (m.icaoId as string) ?? '',
+          raw: (m.rawOb as string) ?? '',
+          tempC: m.temp as number | undefined,
+          dewpointC: m.dewp as number | undefined,
+          windDir: m.wdir as number | string | undefined,
+          windSpeedKt: m.wspd as number | undefined,
+          windGustKt: m.wgst as number | undefined,
+          visibilityMi,
+          ceiling,
+          altimeterInHg: altimMbToInHg(m.altim as number | undefined),
+          flightCategory: reported ?? computed.category ?? '',
+        };
+      });
 
       const tafData: TafForecast[] = tafs.map((t) => ({
         station: (t.icaoId as string) ?? '',
@@ -609,18 +778,20 @@ export function create(config: ConnectorConfig): Connector {
         });
       }
 
-      const categories = metarData.map((m) => m.flightCategory).filter(Boolean);
+      const current = metarData
+        .map((m) => `${m.station} ${m.flightCategory || 'unknown'}`)
+        .join(', ');
       const tafSummary = tafData
-        .map((t) => {
-          const worst = t.periods.reduce((w, p) => {
-            const rank = { LIFR: 0, IFR: 1, MVFR: 2, VFR: 3 };
-            const pRank = rank[p.flightCategory as keyof typeof rank] ?? 3;
-            const wRank = rank[w as keyof typeof rank] ?? 3;
-            return pRank < wRank ? (p.flightCategory ?? w) : w;
-          }, 'VFR');
-          return `${t.station} forecast worst: ${worst}`;
-        })
+        .map((t) => `${t.station} forecast worst: ${worstCategory(t.periods)}`)
         .join('; ');
+      // Fields with no reporting of their own. The brief should say so rather
+      // than quietly using another field's weather for them.
+      const silent = stations.filter(
+        (s) => !metarData.some((m) => m.station === s) && !tafData.some((t) => t.station === s),
+      );
+      const tafless = stations.filter(
+        (s) => metarData.some((m) => m.station === s) && !tafData.some((t) => t.station === s),
+      );
 
       const hazardCount = airSigmetReports.length + gAirmetReports.length + cwaReports.length;
       const hazardNote = hazardCount
@@ -630,8 +801,21 @@ export function create(config: ConnectorConfig): Connector {
       return {
         source: 'aviation_weather',
         description:
-          `Aviation weather for ${stationStr}. Current: ${categories.join(', ') || 'unknown'}. ${tafSummary}. ` +
-          `${hazardNote} ${pireps.length} recent PIREP(s) within ${pirepRadius}nm. ` +
+          `Aviation weather for ${stationStr}. Current: ${current || 'no observations'}. ` +
+          `${tafSummary ? `${tafSummary}. ` : 'No TAFs. '}` +
+          (silent.length
+            ? `No METAR or TAF at all for ${silent.join(', ')} — say so if someone flies there; never borrow another field's weather without naming the field. `
+            : '') +
+          (tafless.length
+            ? `${tafless.join(', ')} report observations but issue no TAF — any forecast for them is another station's. `
+            : '') +
+          (unavailable.length
+            ? `UNAVAILABLE this run (not "nothing to report"): ${unavailable.join('; ')}. `
+            : '') +
+          `${hazardNote} ${pireps.length} recent PIREP(s) within ${pirepRadius}nm of ${pirepStation ?? 'the first station'}. ` +
+          'Flight categories follow FAA thresholds (ceiling = lowest BKN/OVC/VV base; MVFR at or below 3000 ft or 5 SM). ' +
+          "A period's `categoryBasis` says which elements it rests on; a missing category means unknown — never assume VFR. " +
+          'Wind speeds here are knots. A TAF only covers its valid hours — never quote it for a time outside them. ' +
           'TAF forecast periods are decoded into structured data with flight categories, winds, and ceiling for each time window. ' +
           '**Match TAF periods against flight lesson times on the calendar.** If a flight lesson is at 9 AM, check what the TAF ' +
           "forecasts for that specific hour — don't just report current conditions. " +
@@ -653,6 +837,8 @@ export function create(config: ConnectorConfig): Connector {
           cwas: cwaReports,
           densityAltitude,
           afd: trimAfd(afdText),
+          ...(unavailable.length ? { unavailable } : {}),
+          ...(silent.length ? { stationsWithoutReports: silent } : {}),
         },
         priorityHint: hazardCount > 0 ? 'high' : 'normal',
       };
