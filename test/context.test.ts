@@ -37,7 +37,7 @@ describe('prepareContext', () => {
   it('marks prose whose dates have all passed as history', () => {
     const r = prepareContext({ travel: 'Trip May 7-25, 2026. Flag the countdown.' }, today);
     expect(r.stale).toEqual([{ key: 'travel', latest: '2026-05-25' }]);
-    expect(r.entries[0][1]).toContain('Every date in this note (latest 2026-05-25) has passed');
+    expect(r.entries[0][1]).toContain('Every date in this note (latest 2026-05-25) has passed: any plan or deadline it describes is over');
   });
 
   it('drops an entry whose until date has passed, and keeps a current one as written', () => {

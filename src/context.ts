@@ -10,8 +10,9 @@
  *
  * An entry can now carry an `until` date and drops out after it. For plain
  * prose entries, the dates they mention are read: when every one of them is
- * in the past, the entry is still given to the writer but marked as history,
- * and the household is told to update it.
+ * in the past, the entry is still given to the writer with a note that the
+ * plans it describes are over (a past date alone does not make every fact in
+ * it false), and the household is told to update it.
  */
 import { shiftYmd } from './dates.js';
 
@@ -115,7 +116,7 @@ export function prepareContext(
       result.stale.push({ key, latest });
       result.entries.push([
         key,
-        `${text.trim()} [Every date in this note (latest ${latest}) has passed — treat it as history, not as current plans, and never count down to it.]`,
+        `${text.trim()} [Every date in this note (latest ${latest}) has passed: any plan or deadline it describes is over, so never count down to it. Facts in it that do not depend on those dates may still hold; today's data decides.]`,
       ]);
       continue;
     }
