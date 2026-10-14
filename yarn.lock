@@ -3343,7 +3343,7 @@ __metadata:
     prettier: "npm:^3.9.9"
     react: "npm:^19.3.0"
     react-dom: "npm:^19.3.0"
-    suncalc: "npm:^1.9.0"
+    suncalc: "npm:^2.1.1"
     ts-jest: "npm:^29.4.14"
     ts-node: "npm:^10.9.2"
     tsx: "npm:^4.23.15"
@@ -7463,10 +7463,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"suncalc@npm:^1.9.0":
-  version: 1.9.0
-  resolution: "suncalc@npm:1.9.0"
-  checksum: 10c0/3c76c600ec8e60b7a6efab72f48cce3fc9b4ce95f8fa404fcd13d22f618fee2b83d7ad486544aee76bc20129c9f4eae4a76b09640c54167edd1de6099ca6cd3d
+"suncalc@npm:^2.1.1":
+  version: 2.1.1
+  resolution: "suncalc@npm:2.1.1"
+  checksum: 10c0/39fdcabc2ae6abe117aaeab5b6ce14ddfbe2fa8859351ac595f652d446ded475c313ceed9c6b427330f78b52444542546cb975255359f65f78f7d3f4e1a36ff1
   languageName: node
   linkType: hard
 
