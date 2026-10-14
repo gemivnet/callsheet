@@ -32,13 +32,24 @@ interface LanguageHistoryEntry {
   date: string;
   phrase: string;
   translation?: string;
+  /** The theme suggested that day, so later days on the same theme can avoid it. */
+  theme?: string;
 }
 
 interface LanguageHistory {
   entries: LanguageHistoryEntry[];
 }
 
-const DEFAULT_HISTORY_DAYS = 30;
+/**
+ * How many days of past phrases the writer is shown. Thirty let a phrase come
+ * back on schedule: the themes rotate every eighteen days, so a theme's first
+ * phrase had aged out of the window the second time the theme came round, and
+ * the same phrase was taught again 36, 54, 72 or 90 days later.
+ */
+const DEFAULT_HISTORY_DAYS = 90;
+
+/** How long phrases are kept on disk — for theme history and repeat checks. */
+const FILE_RETENTION_DAYS = 365;
 const DEFAULT_LABEL_PREFIX = 'Español';
 const DEFAULT_TARGET_LANGUAGE = 'Spanish';
 const DEFAULT_LEVEL = 'A1-A2';
@@ -69,6 +80,23 @@ const DEFAULT_THEMES = [
   'work and study',
   'shopping and money',
 ];
+
+/** Today's suggested theme, rotating by day of the year. */
+export function themeForToday(now: Date = new Date()): string {
+  const dayOfYear = Math.floor((now.getTime() - Date.UTC(now.getFullYear(), 0, 0)) / 86_400_000);
+  return DEFAULT_THEMES[dayOfYear % DEFAULT_THEMES.length];
+}
+
+/** Lower-case, unaccented, punctuation-free form of a phrase, for repeat checks. */
+export function normalisePhrase(phrase: string): string {
+  return phrase
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function historyPath(outputDir: string): string {
   return join(outputDir, 'language_history.json');
@@ -110,17 +138,18 @@ export function create(config: ConnectorConfig): Connector {
     description: `${targetLanguage} phrase-of-the-day with anti-repeat history`,
 
     async fetch(): Promise<ConnectorResult> {
-      const history = pruneHistory(loadHistory(outputDir), historyDays);
-      const pastPhrases = history.entries.map((e) => ({
-        date: e.date,
-        phrase: e.phrase,
-        translation: e.translation,
-      }));
+      const all = pruneHistory(loadHistory(outputDir), Math.max(historyDays, FILE_RETENTION_DAYS));
+      const windowStart = shiftYmd(todayYmd(), -historyDays);
+      const pastPhrases = all.entries
+        .filter((e) => e.date >= windowStart)
+        .map((e) => ({ date: e.date, phrase: e.phrase, translation: e.translation }));
 
-      const dayOfYear = Math.floor(
-        (Date.now() - Date.UTC(new Date().getFullYear(), 0, 0)) / 86_400_000,
-      );
-      const todayTheme = DEFAULT_THEMES[dayOfYear % DEFAULT_THEMES.length];
+      const todayTheme = themeForToday();
+      // Every phrase ever taught on today's theme, however old: the theme is
+      // where repeats come from.
+      const onTheme = all.entries
+        .filter((e) => e.theme === todayTheme)
+        .map((e) => ({ date: e.date, phrase: e.phrase, translation: e.translation }));
 
       return {
         source: 'language',
@@ -137,8 +166,9 @@ export function create(config: ConnectorConfig): Connector {
           `plan, travel vocab as a trip approaches, weather vocab on an unusual-weather day). ` +
           `**CRITICAL ANTI-REPEAT RULES:** ` +
           `The \`past_phrases\` list contains every phrase the brief has emitted in the last ` +
-          `${historyDays} days — you MUST NOT repeat any of them, even in a slightly different ` +
-          `form. Pick a fresh phrase. Vary the grammar pattern (statements, questions, ` +
+          `${historyDays} days, and \`past_phrases_on_theme\` every phrase ever taught on today's ` +
+          `theme — you MUST NOT repeat any of them, even in a slightly different form or with the ` +
+          `same English meaning. Pick a fresh phrase. Vary the grammar pattern (statements, questions, ` +
           `commands, expressions of feeling) across days. Teach new vocabulary — avoid ` +
           `recycling words that appear frequently in past phrases.`,
         data: {
@@ -148,6 +178,7 @@ export function create(config: ConnectorConfig): Connector {
           retention_days: historyDays,
           today_theme: todayTheme,
           past_phrases: pastPhrases,
+          past_phrases_on_theme: onTheme,
           past_count: pastPhrases.length,
         },
         priorityHint: 'low',
@@ -258,16 +289,25 @@ export function recordBriefPhrase(
     const extracted = extractPhraseFromBrief(brief, labelPrefix);
     if (!extracted) return;
 
-    const history = pruneHistory(loadHistory(outputDir), historyDays);
+    const history = pruneHistory(
+      loadHistory(outputDir),
+      Math.max(historyDays, FILE_RETENTION_DAYS),
+    );
     const today = todayYmd();
 
     // If today already has an entry, replace it rather than duplicate — the
     // brief may be regenerated within the same day (manual re-run, retry).
     history.entries = history.entries.filter((e) => e.date !== today);
+    const key = normalisePhrase(extracted.phrase);
+    const earlier = history.entries.find((e) => normalisePhrase(e.phrase) === key);
+    if (earlier) {
+      console.log(`  Note: today's language phrase repeats the one from ${earlier.date}.`);
+    }
     history.entries.push({
       date: today,
       phrase: extracted.phrase,
       translation: extracted.translation,
+      theme: themeForToday(),
     });
 
     saveHistory(outputDir, history);
