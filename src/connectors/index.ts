@@ -102,8 +102,14 @@ export function loadConnectors(config: Record<string, unknown>): {
 
   // Connectors that persist state (e.g. language phrase history) need to
   // know where the output dir is. Rather than plumb the top-level config
-  // through every connector, inject the shared bits here.
+  // through every connector, inject the shared bits here: the output dir,
+  // the household timezone (unless a connector sets its own), and the names
+  // on the household roster, which the calendar uses to attribute events.
   const outputDir = (config.output_dir as string) ?? 'output';
+  const timezone = config.timezone as string | undefined;
+  const householdNames = ((config.household as { name?: string }[] | undefined) ?? [])
+    .map((m) => m?.name)
+    .filter((n): n is string => typeof n === 'string' && n.length > 0);
 
   for (const [name, connConfig] of Object.entries(connectorConfigs)) {
     if (!connConfig.enabled) continue;
@@ -116,7 +122,14 @@ export function loadConnectors(config: Record<string, unknown>): {
     }
 
     try {
-      connectors.push(entry.factory({ ...connConfig, output_dir: outputDir }));
+      connectors.push(
+        entry.factory({
+          ...connConfig,
+          output_dir: outputDir,
+          ...(timezone && connConfig.timezone === undefined ? { timezone } : {}),
+          ...(householdNames.length ? { household_names: householdNames } : {}),
+        }),
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.log(`  WARNING: Failed to initialize connector '${name}': ${msg}`);

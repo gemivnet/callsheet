@@ -138,7 +138,160 @@ export function relativeDayLabel(todayYmd: string, eventYmd: string, dayOfWeek: 
   return `${dayOfWeek} ${eventYmd} (${-diff} days ago)`;
 }
 
-function simplifyEvent(e: TaggedEvent, tz: string, todayYmd: string) {
+/**
+ * Who an event is about, from its title.
+ *
+ * `people` used to be whoever's calendar the event sat on, so a household
+ * member with no calendar of their own vanished into whoever carried their
+ * events: "Name: Practice" on a parent's calendar was printed as the parent's
+ * practice. A title that starts with a household member's name (followed by a
+ * colon or a space) is that member's event; the calendar owners are kept
+ * separately so the brief can still see whose calendar holds it.
+ */
+export function attributeByTitle(
+  summary: string,
+  owners: string[] | undefined,
+  householdNames: string[],
+): { people?: string[]; onCalendarOf?: string[] } {
+  const title = summary.trimStart().toLowerCase();
+  const named = householdNames.find((n) => {
+    const lower = n.toLowerCase();
+    return title.startsWith(`${lower}:`) || title.startsWith(`${lower} `);
+  });
+  if (!named || (owners?.length === 1 && owners[0] === named)) return { people: owners };
+  return { people: [named], onCalendarOf: owners };
+}
+
+/**
+ * The span of an all-day event. Google's `end.date` is EXCLUSIVE — an event on
+ * Friday through Sunday ends "Monday" — and passing it through raw had briefs
+ * announcing that a weekend away lasted until Monday.
+ */
+export function allDaySpan(
+  startYmd: string,
+  endYmdExclusive: string,
+  todayYmd: string,
+): {
+  lastDay: string;
+  spanDays: number;
+  spanLabel?: string;
+  ongoing?: boolean;
+  dayOfSpan?: string;
+} {
+  const lastDay = endYmdExclusive > startYmd ? shiftYmd(endYmdExclusive, -1) : startYmd;
+  const spanDays =
+    Math.round(
+      (Date.UTC(+lastDay.slice(0, 4), +lastDay.slice(5, 7) - 1, +lastDay.slice(8, 10)) -
+        Date.UTC(+startYmd.slice(0, 4), +startYmd.slice(5, 7) - 1, +startYmd.slice(8, 10))) /
+        86_400_000,
+    ) + 1;
+  if (spanDays <= 1) return { lastDay, spanDays };
+  const day = (ymd: string) => formatInTz(ymd, 'UTC', true).dayOfWeek.slice(0, 3);
+  const out: ReturnType<typeof allDaySpan> = {
+    lastDay,
+    spanDays,
+    spanLabel: `${day(startYmd)} ${startYmd} – ${day(lastDay)} ${lastDay} (${spanDays} days)`,
+  };
+  if (startYmd <= todayYmd && todayYmd <= lastDay) {
+    out.ongoing = startYmd < todayYmd;
+    const n =
+      Math.round(
+        (Date.UTC(+todayYmd.slice(0, 4), +todayYmd.slice(5, 7) - 1, +todayYmd.slice(8, 10)) -
+          Date.UTC(+startYmd.slice(0, 4), +startYmd.slice(5, 7) - 1, +startYmd.slice(8, 10))) /
+          86_400_000,
+      ) + 1;
+    out.dayOfSpan = `day ${n} of ${spanDays}`;
+  }
+  return out;
+}
+
+/** A timed event reduced to what overlap and free-time checks need. */
+export interface TimedSlot {
+  summary: string;
+  people: string[];
+  startMs: number;
+  endMs: number;
+  date: string;
+  timeLabel: string;
+  endTimeLabel: string;
+}
+
+/**
+ * Overlapping timed events for the same person, computed here so the brief
+ * reports real conflicts only. Left to the writer it both missed real overlaps
+ * and invented them between two different people's events.
+ */
+export function findConflicts(slots: TimedSlot[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  const people = [...new Set(slots.flatMap((s) => s.people))];
+  for (const person of people) {
+    const mine = slots
+      .filter((s) => s.people.includes(person))
+      .sort((a, b) => a.startMs - b.startMs);
+    for (let i = 0; i < mine.length; i++) {
+      for (let j = i + 1; j < mine.length && mine[j].startMs < mine[i].endMs; j++) {
+        const overlap = Math.min(mine[i].endMs, mine[j].endMs) - mine[j].startMs;
+        if (overlap <= 0) continue;
+        out.push({
+          person,
+          date: mine[i].date,
+          first: `${mine[i].summary} ${mine[i].timeLabel}–${mine[i].endTimeLabel}`,
+          second: `${mine[j].summary} ${mine[j].timeLabel}–${mine[j].endTimeLabel}`,
+          overlapMinutes: Math.round(overlap / 60_000),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Each person's open stretches today between `dayStartMs` and `dayEndMs`, at
+ * least `minMinutes` long, as "12:00 PM–3:30 PM" labels. This is what lets
+ * the brief suggest when to do a task instead of only listing it.
+ */
+export function freeWindows(
+  slots: TimedSlot[],
+  people: string[],
+  dayStartMs: number,
+  dayEndMs: number,
+  tz: string,
+  minMinutes = 45,
+  nowMs?: number,
+): Record<string, string[]> {
+  const fmt = (ms: number) =>
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date(ms));
+  const out: Record<string, string[]> = {};
+  const from = Math.max(dayStartMs, nowMs ?? dayStartMs);
+  for (const person of people) {
+    const busy = slots
+      .filter((s) => s.people.includes(person) && s.endMs > from && s.startMs < dayEndMs)
+      .sort((a, b) => a.startMs - b.startMs);
+    const windows: string[] = [];
+    let cursor = from;
+    for (const b of busy) {
+      if (b.startMs - cursor >= minMinutes * 60_000) {
+        windows.push(`${fmt(cursor)}–${fmt(b.startMs)}`);
+      }
+      cursor = Math.max(cursor, b.endMs);
+    }
+    if (dayEndMs - cursor >= minMinutes * 60_000) windows.push(`${fmt(cursor)}–${fmt(dayEndMs)}`);
+    out[person] = windows;
+  }
+  return out;
+}
+
+function simplifyEvent(
+  e: TaggedEvent,
+  tz: string,
+  todayYmd: string,
+  householdNames: string[] = [],
+) {
   const start = e.start ?? {};
   const end = e.end ?? {};
   const rawStart = start.dateTime ?? start.date ?? '';
@@ -157,17 +310,26 @@ function simplifyEvent(e: TaggedEvent, tz: string, todayYmd: string) {
     whenLabel = relativeDayLabel(todayYmd, dateLabel, dayOfWeek);
   }
 
+  const summary = e.summary ?? '(no title)';
+  const who = attributeByTitle(summary, e.people, householdNames);
+  const span = allDay && rawStart && rawEnd ? allDaySpan(rawStart, rawEnd, todayYmd) : undefined;
+  const endTimeLabel =
+    !allDay && rawEnd ? (formatInTz(rawEnd, tz, false).timeLabel ?? undefined) : undefined;
+
   return {
-    summary: e.summary ?? '(no title)',
+    summary,
     start: rawStart,
     end: rawEnd,
     location: e.location ?? '',
     description: (e.description ?? '').slice(0, 200),
     allDay,
-    // Whose calendar(s) this event came from. An event on two people's
-    // calendars keeps both names, so a shared appointment is one event
-    // attended by two people rather than two events or one person's.
-    people: e.people,
+    // Who the event is for. An event on two people's calendars keeps both
+    // names, so a shared appointment is one event attended by two people;
+    // a title naming a household member makes it that member's.
+    people: who.people,
+    ...(who.onCalendarOf ? { onCalendarOf: who.onCalendarOf } : {}),
+    ...(endTimeLabel ? { endTimeLabel } : {}),
+    ...(span && span.spanDays > 1 ? span : {}),
     // Pre-computed so the brief writer never has to derive weekday from an
     // ISO string — that's where the April-20-labelled-Sunday bug came from.
     date: dateLabel,
@@ -299,6 +461,21 @@ export function create(config: ConnectorConfig): Connector {
       const lookback = (config.lookback_days as number) ?? 7;
       const accounts = config.accounts as CalendarAccount[] | undefined;
       const categories = (config.event_categories as EventCategory[] | undefined) ?? [];
+      const householdNames = (config.household_names as string[] | undefined) ?? [];
+      // Events that exist on the calendar for reference only (a team's whole
+      // schedule, "not attending"). Printing them crowded out real plans and
+      // produced invented conflicts with games nobody was going to.
+      const excludePatterns = ((config.exclude_patterns as string[] | undefined) ?? []).flatMap(
+        (p) => {
+          try {
+            return [new RegExp(p, 'i')];
+          } catch {
+            return [];
+          }
+        },
+      );
+      const dayStartHour = (config.day_start_hour as number | undefined) ?? 8;
+      const dayEndHour = (config.day_end_hour as number | undefined) ?? 21;
       const tz =
         (config.timezone as string) ??
         process.env.TZ ??
@@ -437,12 +614,39 @@ export function create(config: ConnectorConfig): Connector {
         });
       }
 
-      const todayEvents = mergeAndSort(allTodayEvents).map((e) => simplifyEvent(e, tz, today_ymd));
-      const upcomingEvents = mergeAndSort(allUpcomingEvents).map((e) =>
-        simplifyEvent(e, tz, today_ymd),
-      );
-      const recentEvents = mergeAndSort(allRecentEvents).map((e) =>
-        simplifyEvent(e, tz, today_ymd),
+      let omitted = 0;
+      const keep = (events: TaggedEvent[]): TaggedEvent[] =>
+        events.filter((e) => {
+          const text = `${e.summary ?? ''} ${e.description ?? ''}`;
+          const drop = excludePatterns.some((re) => re.test(text));
+          if (drop) omitted++;
+          return !drop;
+        });
+      const simplify = (e: TaggedEvent) => simplifyEvent(e, tz, today_ymd, householdNames);
+      const todayEvents = keep(mergeAndSort(allTodayEvents)).map(simplify);
+      const upcomingEvents = keep(mergeAndSort(allUpcomingEvents)).map(simplify);
+      const recentEvents = keep(mergeAndSort(allRecentEvents)).map(simplify);
+
+      const slots: TimedSlot[] = [...todayEvents, ...upcomingEvents]
+        .filter((ev) => !ev.allDay && ev.start && ev.end && ev.people?.length)
+        .map((ev) => ({
+          summary: ev.summary,
+          people: ev.people ?? [],
+          startMs: new Date(ev.start).getTime(),
+          endMs: new Date(ev.end).getTime(),
+          date: ev.date ?? '',
+          timeLabel: ev.timeLabel ?? '',
+          endTimeLabel: ev.endTimeLabel ?? '',
+        }));
+      const conflicts = findConflicts(slots);
+      const dayStart = zonedDayStart(today_ymd, tz).getTime();
+      const roster = [...new Set([...(accounts ?? []).map((a) => a.name), ...householdNames])];
+      const freeToday = freeWindows(
+        slots.filter((sl) => sl.date === today_ymd),
+        roster,
+        dayStart + dayStartHour * 3_600_000,
+        dayStart + dayEndHour * 3_600_000,
+        tz,
       );
 
       const aggregates = buildAggregates(
@@ -462,7 +666,10 @@ export function create(config: ConnectorConfig): Connector {
         today: todayEvents,
         upcoming: upcomingEvents,
         aggregates,
+        conflicts,
+        free_time_today: freeToday,
       };
+      if (omitted > 0) data.omitted_reference_events = omitted;
       if (lookback > 0) {
         data.recent = recentEvents;
       }
@@ -480,8 +687,16 @@ export function create(config: ConnectorConfig): Connector {
             : '') +
           "Use today's events for the schedule section. Use upcoming for the lookahead section — " +
           'highlight things that need preparation. ' +
-          "Each event's `people` array lists the household member(s) whose calendar it is on; " +
-          'an event with two names is one shared commitment, not two. ' +
+          "Each event's `people` array lists who the event is for: the household member named at " +
+          "the start of its title, otherwise whoever's calendar holds it (`onCalendarOf` says whose " +
+          'calendar it sits on when that differs). An event with two names is one shared commitment, ' +
+          'not two. Never infer that someone attends an event from whose calendar it is on. ' +
+          'Multi-day all-day events carry `lastDay`, `spanLabel` and, while running, `dayOfSpan` — ' +
+          "use them; an all-day event's raw `end` is the day AFTER it ends. " +
+          '`conflicts` lists overlapping events for the same person, computed from the times — report ' +
+          "only those, and never treat two different people's events as a clash. " +
+          "`free_time_today` lists each person's open stretches today, for suggesting when a task " +
+          'fits. ' +
           '**CRITICAL: any number you state about how many events someone had must be read from ' +
           '`aggregates.by_person`, which is computed from this data. Do NOT count events yourself — ' +
           'hand-counting has produced both over- and under-counts on correct data.** ' +
@@ -491,6 +706,9 @@ export function create(config: ConnectorConfig): Connector {
           `and already resolved in the configured timezone (${tz}).**` +
           (fetchErrors.length > 0
             ? ` NOTE: ${fetchErrors.length} calendar(s) failed to load — see \`fetch_errors\`. Data may be incomplete.`
+            : '') +
+          (omitted > 0
+            ? ` ${omitted} reference-only event(s) were left out on purpose; do not look for them.`
             : ''),
         data,
         priorityHint: 'high',
