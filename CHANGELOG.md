@@ -1,5 +1,12 @@
 # callsheet
 
+## 1.8.2
+
+### Patch Changes
+
+- be6b6f9: A preview (`--preview` or the dashboard's generate) no longer closes Todoist tasks or rewrites the language phrase history. Auto-close ran on previews too, so regenerating a brief to look at it could close tasks, and the preview's phrase replaced the one the morning's brief had printed, letting that phrase come back later. Both now happen only on real runs, like the task coach and the living context.
+- 4601d24: The next day's brief now diffs against the page that actually printed. A dashboard preview or re-run replaces the day's brief file, and the following morning used to compare itself with that later version, so items the household never saw on paper counted as already said. The morning's copy is now also kept on the first day after upgrading, when no scheduled run has been recorded yet; previously that day's re-run overwrote the printed brief with no copy.
+
 ## 1.8.1
 
 ### Patch Changes
