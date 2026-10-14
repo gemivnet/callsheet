@@ -209,6 +209,18 @@ interface ExtractedPhrase {
  * prefix. Returns null if the brief didn't surface a phrase (e.g. the LLM
  * skipped it, or the brief is an error brief).
  */
+/**
+ * The label prefix the brief uses for the language phrase, or null when the
+ * language connector is off. Other passes use it to leave that line alone.
+ */
+export function languageLabelPrefix(config: {
+  connectors?: Record<string, ConnectorConfig>;
+}): string | null {
+  const conn = config.connectors?.language;
+  if (!conn?.enabled) return null;
+  return (conn.label_prefix as string | undefined) ?? DEFAULT_LABEL_PREFIX;
+}
+
 export function extractPhraseFromBrief(brief: Brief, labelPrefix: string): ExtractedPhrase | null {
   const re = buildPhraseRegex(labelPrefix);
   for (const section of brief.sections ?? []) {

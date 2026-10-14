@@ -86,6 +86,13 @@ export interface CallsheetConfig {
   /** Everyone the brief is about, including people with no connector accounts. */
   household?: HouseholdMember[];
   context?: Record<string, string>;
+  /**
+   * Free-text notes to the brief writer about what the household wants from
+   * the brief ("never list games we are not attending"). Same purpose as a
+   * `feedback.md` beside the process, but lives in config, which matters in a
+   * container where only config.yaml is mounted.
+   */
+  feedback_notes?: string;
   connectors?: Record<string, ConnectorConfig>;
   extras?: BriefExtra[];
   auto_close_tasks?: boolean;

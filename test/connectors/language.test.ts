@@ -2,7 +2,13 @@ import { jest } from '@jest/globals';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { create, validate, extractPhraseFromBrief, recordBriefPhrase } from '../../src/connectors/language.js';
+import {
+  create,
+  validate,
+  extractPhraseFromBrief,
+  recordBriefPhrase,
+  languageLabelPrefix,
+} from '../../src/connectors/language.js';
 import { PASS, INFO } from '../../src/test-icons.js';
 import type { Brief } from '../../src/types.js';
 
@@ -156,7 +162,10 @@ describe('language connector', () => {
     }
 
     it('parses the standard straight-quote em-dash format', () => {
-      const r = extractPhraseFromBrief(briefWith('Español: "Buenos días" — Good morning'), 'Español');
+      const r = extractPhraseFromBrief(
+        briefWith('Español: "Buenos días" — Good morning'),
+        'Español',
+      );
       expect(r).toEqual({ phrase: 'Buenos días', translation: 'Good morning' });
     });
 
@@ -194,7 +203,7 @@ describe('language connector', () => {
       };
     }
 
-    it('appends today\'s phrase to the history file', () => {
+    it("appends today's phrase to the history file", () => {
       recordBriefPhrase(makeBrief('Español: "Buenas noches" — Good evening'), {
         output_dir: outputDir,
         connectors: { language: { enabled: true, label_prefix: 'Español' } },
@@ -265,5 +274,21 @@ describe('language connector', () => {
       });
       expect(existsSync(join(outputDir, 'language_history.json'))).toBe(false);
     });
+  });
+});
+
+describe('languageLabelPrefix', () => {
+  it('is null when the language connector is off or absent', () => {
+    expect(languageLabelPrefix({})).toBeNull();
+    expect(languageLabelPrefix({ connectors: { language: { enabled: false } } })).toBeNull();
+  });
+
+  it('is the configured prefix, or the default', () => {
+    expect(
+      languageLabelPrefix({
+        connectors: { language: { enabled: true, label_prefix: 'Français' } },
+      }),
+    ).toBe('Français');
+    expect(languageLabelPrefix({ connectors: { language: { enabled: true } } })).toBe('Español');
   });
 });

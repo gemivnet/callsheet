@@ -5,10 +5,12 @@ import {
   loadConfig,
   fetchAll,
   buildDataPayload,
-  critiqueBrief,
   runPipeline,
   runtimeErrors,
+  CRITIQUE_MODEL,
 } from './core.js';
+import { factCheckBrief, verifyFactIssues } from './review.js';
+import { todayYmd } from './dates.js';
 import { getRegistry } from './connectors/index.js';
 import { isOnVacation, todayInTz } from './scheduler.js';
 
@@ -120,8 +122,7 @@ async function main() {
     }
 
     const outputDir = config.output_dir ?? 'output';
-    const dateStr =
-      typeof opts.review === 'string' ? opts.review : new Date().toISOString().slice(0, 10);
+    const dateStr = typeof opts.review === 'string' ? opts.review : todayYmd(config.timezone);
 
     const briefPath = join(outputDir, `callsheet_${dateStr}.json`);
     if (!existsSync(briefPath)) {
@@ -136,22 +137,30 @@ async function main() {
     const brief = JSON.parse(readFileSync(briefPath, 'utf-8'));
     console.log(`Reviewing brief for ${dateStr}...`);
 
-    // Fetch fresh data so the critique can compare against it
-    console.log('Fetching current data for comparison...');
-    const { results } = await fetchAll(config);
-    const dataPayload = buildDataPayload(results);
+    // Check the brief against the data it was written from. Fresh data would
+    // flag every change since that morning as an error in the brief.
+    const savedData = join(outputDir, `connector_data_${dateStr}.json`);
+    let dataPayload: string;
+    if (existsSync(savedData)) {
+      dataPayload = readFileSync(savedData, 'utf-8');
+    } else {
+      console.log(`No saved data for ${dateStr}; fetching current data instead...`);
+      dataPayload = buildDataPayload((await fetchAll(config)).results);
+    }
 
     const client = new Anthropic({ apiKey });
-    const issues = await critiqueBrief(client, brief, dataPayload, outputDir);
+    const issues = await factCheckBrief(client, CRITIQUE_MODEL, brief, dataPayload, outputDir);
+    const verified = new Set(verifyFactIssues(issues, brief, dataPayload));
 
     if (issues.length === 0) {
-      console.log('\n\u2705 No issues found — brief looks good.');
+      console.log('\n\u2705 No contradictions found.');
     } else {
-      console.log(`\n\u26a0\ufe0f  ${issues.length} issue(s) found:\n`);
+      console.log(`\n${issues.length} possible issue(s), ${verified.size} verified:\n`);
       for (const issue of issues) {
-        console.log(`  \u2022 ${issue}`);
+        const mark = verified.has(issue) ? 'VERIFIED  ' : 'unverified';
+        console.log(`  ${mark} "${issue.brief_quote}" -> "${issue.corrected_text}"`);
+        console.log(`             data: "${issue.payload_quote}" — ${issue.explanation}`);
       }
-      console.log("\nThese have been saved and will be fed into tomorrow's prompt.");
     }
     return;
   }

@@ -180,138 +180,36 @@ describe('buildHouseholdContext', () => {
 });
 
 describe('buildFeedbackContext', () => {
-  function mockCritiqueFiles(entries: Record<string, { date: string; issues: string[] }>) {
-    // Directory exists, feedback.md does not (we're only testing critique side)
-    mockExistsSync.mockImplementation((p: unknown) => {
-      const path = String(p);
-      if (path.endsWith('feedback.md')) return false;
-      return path.includes('feedback') || path.includes('output');
-    });
-    mockReaddirSync.mockReturnValue(Object.keys(entries));
-    mockReadFileSync.mockImplementation((p: unknown) => {
-      const path = String(p);
-      const match = path.match(/critique_(\d{4}-\d{2}-\d{2})\.json$/);
-      if (!match) return '';
-      const key = `critique_${match[1]}.json`;
-      return JSON.stringify(entries[key] ?? { date: match[1], issues: [] });
-    });
-  }
-
-  it('returns empty string when there are no critique files', () => {
+  it('is empty when the household has left no notes', () => {
     mockExistsSync.mockReturnValue(false);
-    mockReaddirSync.mockReturnValue([]);
-    expect(core.buildFeedbackContext('output')).toBe('');
+    expect(core.buildFeedbackContext({})).toBe('');
+    expect(core.buildFeedbackContext()).toBe('');
   });
 
-  it('flags a category as RECURRING when it appears on 3+ distinct days', () => {
-    mockCritiqueFiles({
-      'critique_2026-04-07.json': {
-        date: '2026-04-07',
-        issues: ['Duplication: item A appears in Exec Brief AND Tasks'],
-      },
-      'critique_2026-04-08.json': {
-        date: '2026-04-08',
-        issues: ['Duplication: item B appears in Exec Brief AND Tasks'],
-      },
-      'critique_2026-04-09.json': {
-        date: '2026-04-09',
-        issues: ['Duplication: item C appears in Exec Brief AND Email Highlights'],
-      },
-    });
+  it('includes notes from config and from feedback.md', () => {
+    mockExistsSync.mockImplementation((p: unknown) => String(p).endsWith('feedback.md'));
+    mockReadFileSync.mockReturnValue('Use bullet points.');
 
-    const ctx = core.buildFeedbackContext('output');
-    expect(ctx).toContain('RECURRING quality problems');
-    expect(ctx).toContain('**Duplication** (3 of the last 3 days)');
-    // Remedy text should appear — that's the whole point.
-    expect(ctx).toContain('walk each Executive Brief item');
+    const ctx = core.buildFeedbackContext({ feedback_notes: 'Never list games we skip.' });
+
+    expect(ctx).toContain('## User feedback');
+    expect(ctx).toContain('Never list games we skip.');
+    expect(ctx).toContain('Use bullet points.');
   });
 
-  it('does NOT flag a category that only appears once', () => {
-    mockCritiqueFiles({
-      'critique_2026-04-07.json': {
-        date: '2026-04-07',
-        issues: ['Verbosity: Exec Brief too long'],
-      },
-      'critique_2026-04-08.json': {
-        date: '2026-04-08',
-        issues: ['Missing data: calendar event not surfaced'],
-      },
-    });
-
-    const ctx = core.buildFeedbackContext('output');
-    expect(ctx).not.toContain('RECURRING quality problems');
-    // Specific examples section should still appear.
-    expect(ctx).toContain('Recent specific examples');
+  it('ignores an empty feedback.md and blank config notes', () => {
+    mockExistsSync.mockImplementation((p: unknown) => String(p).endsWith('feedback.md'));
+    mockReadFileSync.mockReturnValue('   ');
+    expect(core.buildFeedbackContext({ feedback_notes: '  ' })).toBe('');
   });
 
-  it('deduplicates a single category across multiple issues on the same day', () => {
-    // Three duplication issues on day 1, one on day 2 — should count as 2 days, not 4.
-    mockCritiqueFiles({
-      'critique_2026-04-07.json': {
-        date: '2026-04-07',
-        issues: [
-          'Duplication: A in Exec Brief AND Tasks',
-          'Duplication: B in Exec Brief AND Email',
-          'Duplication: C in Tasks AND Upcoming',
-        ],
-      },
-      'critique_2026-04-08.json': {
-        date: '2026-04-08',
-        issues: ['Duplication: D in Exec Brief AND Tasks'],
-      },
-    });
-
-    const ctx = core.buildFeedbackContext('output');
-    // Only 2 distinct days, below the 3-day threshold → not recurring.
-    expect(ctx).not.toContain('RECURRING quality problems');
-  });
-
-  it('sorts recurring categories by frequency descending', () => {
-    mockCritiqueFiles({
-      'critique_2026-04-07.json': {
-        date: '2026-04-07',
-        issues: ['Duplication: x', 'Verbosity: y'],
-      },
-      'critique_2026-04-08.json': {
-        date: '2026-04-08',
-        issues: ['Duplication: x', 'Verbosity: y'],
-      },
-      'critique_2026-04-09.json': {
-        date: '2026-04-09',
-        issues: ['Duplication: x', 'Verbosity: y'],
-      },
-      'critique_2026-04-10.json': {
-        date: '2026-04-10',
-        issues: ['Duplication: x'],
-      },
-    });
-
-    const ctx = core.buildFeedbackContext('output');
-    const dupIdx = ctx.indexOf('**Duplication**');
-    const verbIdx = ctx.indexOf('**Verbosity**');
-    expect(dupIdx).toBeGreaterThan(-1);
-    expect(verbIdx).toBeGreaterThan(-1);
-    expect(dupIdx).toBeLessThan(verbIdx); // 4 days > 3 days → Duplication first
-  });
-
-  it('ignores issues that do not match a known category prefix', () => {
-    mockCritiqueFiles({
-      'critique_2026-04-07.json': {
-        date: '2026-04-07',
-        issues: ['Random freeform observation without a category prefix'],
-      },
-      'critique_2026-04-08.json': {
-        date: '2026-04-08',
-        issues: ['Another uncategorized gripe'],
-      },
-      'critique_2026-04-09.json': {
-        date: '2026-04-09',
-        issues: ['Yet another'],
-      },
-    });
-
-    const ctx = core.buildFeedbackContext('output');
-    expect(ctx).not.toContain('RECURRING quality problems');
+  it('never feeds self-review findings back to the writer', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['critique_2026-03-27.json', 'review_2026-10-14.json']);
+    mockReadFileSync.mockImplementation((p: unknown) =>
+      String(p).endsWith('feedback.md') ? '' : '{"issues":["Duplication: x"]}',
+    );
+    expect(core.buildFeedbackContext({})).toBe('');
   });
 });
 
@@ -1071,92 +969,6 @@ describe('saveMemory', () => {
   });
 });
 
-describe('repairBrief', () => {
-  const mockClient = { messages: { create: mockMessagesCreate } } as never;
-  const dirty: Brief = {
-    title: 'Test Brief',
-    sections: [
-      { heading: 'Executive Brief', items: [{ label: 'Replace furnace filter' }] },
-      { heading: 'Tasks', items: [{ label: 'Replace furnace filter' }] },
-    ],
-  };
-  const clean = {
-    title: 'Test Brief',
-    sections: [{ heading: 'Tasks', items: [{ label: 'Replace furnace filter' }] }],
-  };
-
-  it('repairs duplication and reports what it fixed', async () => {
-    mockMessagesCreate.mockResolvedValue(mockApiResponse(JSON.stringify(clean)));
-    const issue = "Duplication: 'Replace furnace filter' appears in Executive Brief and Tasks";
-
-    const res = await core.repairBrief(mockClient, 'model', dirty, [issue], '/tmp/output');
-
-    expect(res.repaired).toEqual([issue]);
-    expect(res.brief.sections).toHaveLength(1);
-  });
-
-  it('ignores categories that are not objectively checkable', async () => {
-    const res = await core.repairBrief(
-      mockClient,
-      'model',
-      dirty,
-      ['Verbosity: too long', 'Poor grouping: mixed domains'],
-      '/tmp/output',
-    );
-
-    // No repairable issue -> no model call at all.
-    expect(mockMessagesCreate).not.toHaveBeenCalled();
-    expect(res.repaired).toEqual([]);
-    expect(res.brief).toBe(dirty);
-  });
-
-  it('recognises the singular "Stale item" variant as repairable-adjacent categories do', () => {
-    // Guards the prefix normalisation: 22 real issues used the singular form and
-    // were silently dropped from the recurring-pattern counter.
-    mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['critique_2026-01-01.json'] as never);
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ date: '2026-01-01', issues: ['Stale item: an old thing'] }),
-    );
-    const ctx = core.buildFeedbackContext('output');
-    expect(ctx).toContain('Stale item');
-  });
-
-  it('keeps the original brief when the model returns unusable JSON', async () => {
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    mockMessagesCreate.mockResolvedValue(mockApiResponse('not json at all'));
-
-    const res = await core.repairBrief(
-      mockClient,
-      'model',
-      dirty,
-      ['Duplication: x appears twice'],
-      '/tmp/output',
-    );
-
-    expect(res.brief).toBe(dirty);
-    expect(res.repaired).toEqual([]);
-    consoleSpy.mockRestore();
-  });
-
-  it('keeps the original brief when the repair drops every section', async () => {
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    mockMessagesCreate.mockResolvedValue(mockApiResponse('{"title":"x","sections":[]}'));
-
-    const res = await core.repairBrief(
-      mockClient,
-      'model',
-      dirty,
-      ['Duplication: x appears twice'],
-      '/tmp/output',
-    );
-
-    expect(res.brief).toBe(dirty);
-    expect(res.repaired).toEqual([]);
-    consoleSpy.mockRestore();
-  });
-});
-
 describe('notifyFailure', () => {
   afterEach(() => {
     delete (globalThis as { fetch?: unknown }).fetch;
@@ -1311,58 +1123,6 @@ describe('isErrorBrief', () => {
       false,
     );
     expect(core.isErrorBrief({ title: 'x', sections: [] })).toBe(false);
-  });
-});
-
-describe('critiqueBrief', () => {
-  const mockClient = { messages: { create: mockMessagesCreate } } as never;
-  const sampleBrief: Brief = {
-    title: 'Test Brief',
-    sections: [{ heading: 'Tasks', items: [{ label: 'Do something' }] }],
-  };
-
-  it('should return issues from critique', async () => {
-    mockMessagesCreate.mockResolvedValue(
-      mockApiResponse('["Duplicate item in tasks and exec brief"]'),
-    );
-    mockExistsSync.mockReturnValue(false);
-
-    const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
-
-    expect(issues).toHaveLength(1);
-    expect(issues[0]).toContain('Duplicate');
-  });
-
-  it('should save critique to feedback dir', async () => {
-    mockMessagesCreate.mockResolvedValue(mockApiResponse('["Too verbose"]'));
-
-    const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
-
-    expect(issues).toEqual(['Too verbose']);
-    expect(mockMkdirSync).toHaveBeenCalled();
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    const writtenPath = mockWriteFileSync.mock.calls[0][0] as string;
-    expect(writtenPath).toContain('critique_');
-  });
-
-  it('should return empty array when no issues found', async () => {
-    mockMessagesCreate.mockResolvedValue(mockApiResponse('[]'));
-
-    const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
-
-    expect(issues).toEqual([]);
-    // Should not write file when no issues
-    expect(mockWriteFileSync).not.toHaveBeenCalled();
-  });
-
-  it('should handle API failure gracefully', async () => {
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    mockMessagesCreate.mockRejectedValue(new Error('Service unavailable'));
-
-    const issues = await core.critiqueBrief(mockClient, sampleBrief, '{}', '/tmp/output');
-
-    expect(issues).toEqual([]);
-    consoleSpy.mockRestore();
   });
 });
 
@@ -1783,9 +1543,9 @@ describe('generateBrief', () => {
     const opts = firstCall[0] as { system: string };
     expect(opts.system).toContain('User feedback');
     expect(opts.system).toContain('Be more concise');
-    // Specific critique issues show up in the examples section.
-    expect(opts.system).toContain('Recent specific examples');
-    expect(opts.system).toContain('Too verbose in tasks section');
+    // Old critique files are history for people, not instructions for the writer.
+    expect(opts.system).not.toContain('Too verbose in tasks section');
+    expect(opts.system).not.toContain('RECURRING');
   });
 
   it('should include previous brief diff context when yesterday brief exists', async () => {
@@ -2685,30 +2445,83 @@ describe('runPipeline', () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it('should log self-critique issue count when issues found', async () => {
+  it('reviews the brief: drops a repeated Executive item and applies a verified correction', async () => {
     setupPipelineMocks();
-
-    // Clear and re-set mockMessagesCreate to return critique issues
     mockMessagesCreate.mockReset();
+    const draft = {
+      title: 'x',
+      sections: [
+        {
+          heading: 'Executive Brief',
+          items: [
+            { label: 'Recycling pickup tomorrow — bins out tonight' },
+            { label: 'Rain clears by noon, dry afternoon' },
+          ],
+        },
+        {
+          heading: 'Tasks',
+          items: [{ label: 'Put recycling bins out tonight for pickup tomorrow', checkbox: true }],
+        },
+        { heading: 'Schedule', items: [{ time: '3:00 PM', label: 'Dentist' }] },
+      ],
+    };
     mockMessagesCreate
+      .mockResolvedValueOnce(mockApiResponse(JSON.stringify(draft)))
+      .mockResolvedValueOnce(mockApiResponse('["insight"]')) // memory
       .mockResolvedValueOnce(
         mockApiResponse(
           JSON.stringify({
-            title: 'Critique Brief',
-            sections: [{ heading: 'Weather', body: 'Sunny.' }],
+            issues: [
+              {
+                brief_quote: '3:00 PM',
+                payload_quote: 'conditions',
+                corrected_text: '2:30 PM',
+                explanation: 'The data says 2:30.',
+              },
+              {
+                brief_quote: 'Dentist',
+                payload_quote: 'not in the data at all',
+                corrected_text: 'Doctor',
+                explanation: 'unverifiable',
+              },
+            ],
           }),
         ),
-      )
-      .mockResolvedValueOnce(mockApiResponse('["insight"]')) // memory
-      .mockResolvedValueOnce(mockApiResponse('["Too verbose", "Missing data"]')); // critique
-
+      );
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
-    await core.runPipeline({ ...pipelineConfig, printer: '' });
+    const result = await core.runPipeline({ ...pipelineConfig, printer: '' });
 
-    const logs = consoleSpy.mock.calls.map((c) => c[0] as string);
-    expect(logs.some((l) => l.includes('Self-critique: 2 issue(s)'))).toBe(true);
+    const exec = result.brief.sections.find((s) => s.heading === 'Executive Brief');
+    expect(exec?.items?.map((i) => i.label)).toEqual(['Rain clears by noon, dry afternoon']);
+    const schedule = result.brief.sections.find((s) => s.heading === 'Schedule');
+    // Verified: '3:00 PM' is in the brief once and 'conditions' is in the data.
+    expect(schedule?.items?.[0].time).toBe('2:30 PM');
+    // Unverified: its data quote appears nowhere, so the label stays.
+    expect(schedule?.items?.[0].label).toBe('Dentist');
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(
+      logs.some((l) =>
+        l.includes(
+          'Review: 1 repeated Executive Brief item(s) removed; 2 fact issue(s) reported, 1 verified, 1 corrected.',
+        ),
+      ),
+    ).toBe(true);
+    expect(mockWriteFileSync.mock.calls.some((c) => String(c[0]).includes('review_'))).toBe(true);
+    consoleSpy.mockRestore();
+  });
 
+  it('keeps going when the review log cannot be written', async () => {
+    setupPipelineMocks();
+    mockWriteFileSync.mockImplementation((path: unknown) => {
+      if (String(path).includes('review_')) throw new Error('disk full');
+    });
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await core.runPipeline({ ...pipelineConfig, printer: '' });
+
+    expect(result.generated).toBe(true);
+    mockWriteFileSync.mockReset();
     consoleSpy.mockRestore();
   });
 });
