@@ -823,7 +823,7 @@ describe('health appointments', () => {
     for (const title of ['Practice', 'Written exam', 'In Office', 'Vet: Dr. Paws', 'Cat checkup']) {
       expect([title, isHealthAppointment(title)]).toEqual([title, false]);
     }
-    expect(isHealthAppointment('Dinner', '12 Lake Shore Dr Springfield')).toBe(false);
+    expect(isHealthAppointment('Dinner', '12 Elm Dr, Anytown')).toBe(false);
   });
 
   it("uses the household's own patterns for practices the vocabulary cannot know", () => {
