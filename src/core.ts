@@ -11,7 +11,13 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import * as yaml from 'js-yaml';
-import type { CallsheetConfig, ConnectorResult, Brief, HouseholdMember } from './types.js';
+import type {
+  CallsheetConfig,
+  ConnectorResult,
+  Brief,
+  BriefItem,
+  HouseholdMember,
+} from './types.js';
 import { loadConnectors } from './connectors/index.js';
 import { recordBriefPhrase, languageLabelPrefix } from './connectors/language.js';
 import { renderPdf } from './render.js';
@@ -19,6 +25,17 @@ import { logUsage } from './usage.js';
 import { todayYmd, shiftYmd, formatLongDate } from './dates.js';
 import { deriveStationsFromEvents, type AirportAlias } from './airports.js';
 import { prepareContext } from './context.js';
+import {
+  activeFacts,
+  buildLivingContext,
+  changeItems,
+  livingSettings,
+  loadLiving,
+  openConfigFlags,
+  reviewLivingContext,
+  saveLiving,
+  type LivingChanges,
+} from './living.js';
 import { printAndConfirm, type PrintOptions, type PrintResult } from './print.js';
 import { extractResponseText, stripJsonCodeFences } from './llm.js';
 import {
@@ -1155,22 +1172,55 @@ export async function generateBrief(
   const client = new Anthropic({ apiKey });
   const model = config.model ?? DEFAULT_MODEL;
   const drainedErrors = runtimeErrors.drain();
-  const systemPrompt =
-    loadPrompt(config) + buildConnectorIssuesContext(connectorIssues, drainedErrors);
-
   const today = new Date();
-  const dateStr = formatLongDate(todayYmd(config.timezone, today));
+  const todayStr = todayYmd(config.timezone, today);
+  const dateStr = formatLongDate(todayStr);
   const weekly = isWeeklyReviewDay(config, today);
+  const outputDir = config.output_dir ?? 'output';
+
+  // Living context: learn what the morning's data has changed about the
+  // household before the writer reads its context (real runs only).
+  const livingCfg = livingSettings(config);
+  let living = livingCfg.enabled ? loadLiving(outputDir) : null;
+  let livingChanges: LivingChanges | null = null;
+  if (living && options.applyActions) {
+    const reviewed = await reviewLivingContext(
+      client,
+      CRITIQUE_MODEL,
+      config,
+      living,
+      dataPayload,
+      todayStr,
+      outputDir,
+      {
+        maxTokens: HOUSEKEEPING_MAX_TOKENS,
+        warn: (msg) => runtimeErrors.add('context_review', msg, 'warning'),
+      },
+    );
+    living = reviewed.living;
+    livingChanges = reviewed.changes;
+    saveLiving(outputDir, living);
+    const { added, retired, flagged } = livingChanges;
+    if (added.length + retired.length + flagged.length) {
+      console.log(
+        `  Context: ${added.length} fact(s) learned, ${retired.length} retired, ` +
+          `${flagged.length} config entr${flagged.length === 1 ? 'y' : 'ies'} flagged.`,
+      );
+    }
+  }
+
+  const systemPrompt =
+    loadPrompt(config) +
+    (living ? buildLivingContext(activeFacts(living, todayStr, livingCfg.ignore)) : '') +
+    buildConnectorIssuesContext(connectorIssues, drainedErrors);
 
   // Previous-brief diff context runs every day, weekly review or not — the
   // weekly blurb is a small supplement to the daily brief, not a replacement,
   // so yesterday's brief is still relevant for duplication checks.
-  const outputDir = config.output_dir ?? 'output';
   const prevBrief = loadPreviousBrief(outputDir);
   const diffContext = prevBrief ? buildDiffContext(prevBrief) : '';
 
   // Task coach: what the writer needs to plan the day, computed in code.
-  const todayStr = todayYmd(config.timezone, today);
   const coach = coachSettings(config);
   const people = coach.enabled ? readTodoist(dataPayload) : [];
   let ledger = coach.enabled ? observeTasks(loadLedger(outputDir), people, todayStr) : undefined;
@@ -1296,10 +1346,13 @@ export async function generateBrief(
     );
   }
 
-  // Once a week, tell the household which parts of its context have gone stale.
+  // Housekeeping: what the living context learned today, and once a week the
+  // context entries the household should update by hand.
+  const housekeeping: BriefItem[] = livingChanges ? changeItems(livingChanges) : [];
   if (weekly) {
     const ctx = prepareContext(config.context, todayStr);
-    const items = [
+    const listed = new Set(housekeeping.map((i) => i.label));
+    const weeklyItems: BriefItem[] = [
       ...ctx.stale.map(({ key, latest }) => ({
         label: `Update the "${key}" context in config.yaml`,
         note: `every date it mentions has passed (latest ${latest})`,
@@ -1310,8 +1363,21 @@ export async function generateBrief(
         note: 'its until date has passed, so it is no longer used',
         checkbox: true,
       })),
+      ...(living ? openConfigFlags(living, config) : []).map((f) => ({
+        label: `Update the "${f.key}" context in config.yaml`,
+        note: `${f.reason} (noticed ${f.date})`,
+        checkbox: true,
+      })),
     ];
-    if (items.length) brief.sections.push({ heading: HOUSEKEEPING_HEADING, items });
+    for (const item of weeklyItems) {
+      if (!listed.has(item.label)) {
+        housekeeping.push(item);
+        listed.add(item.label);
+      }
+    }
+  }
+  if (housekeeping.length) {
+    brief.sections.push({ heading: HOUSEKEEPING_HEADING, items: housekeeping });
   }
 
   // Review before printing: repeats out of the Executive Brief, in code; then

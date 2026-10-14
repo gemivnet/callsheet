@@ -60,6 +60,14 @@ credentials_dir: secrets
 #   capture_label: callsheet
 #   schedule_focus: true
 
+# Living context: learn household changes from the data (a new job, a booked
+# trip, a finished project), each backed by a quote that is checked, printed
+# under Housekeeping the day it is learned, and expiring on its own. Config is
+# never edited. `ignore` vetoes learned facts containing any of the fragments.
+# living_context:
+#   enabled: true
+#   ignore: []
+
 # Your own notes to the brief writer, followed every morning until removed.
 # feedback_notes: |
 #   - Never list games we are not attending

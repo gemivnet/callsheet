@@ -92,6 +92,14 @@ export interface CallsheetConfig {
    */
   context?: Record<string, string | { text: string; until?: string }>;
   /**
+   * Living context: facts callsheet learns from the data each real run (a new
+   * job, a booked trip, a finished project), each backed by a quote from the
+   * data and kept in `output/context/living.json`. Config context is never
+   * edited; entries the data contradicts are listed under Housekeeping.
+   * `ignore` vetoes learned facts containing any of the given text.
+   */
+  living_context?: { enabled?: boolean; ignore?: string[] };
+  /**
    * Free-text notes to the brief writer about what the household wants from
    * the brief ("never list games we are not attending"). Same purpose as a
    * `feedback.md` beside the process, but lives in config, which matters in a

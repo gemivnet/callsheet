@@ -2795,6 +2795,119 @@ describe('runPipeline', () => {
     logSpy.mockRestore();
   });
 
+  it('learns household changes before writing, and prints them under Housekeeping', async () => {
+    const payload = JSON.stringify([
+      { source: 'gmail', data: { emails: [{ subject: 'Your offer letter from Northwind' }] } },
+    ]);
+    mockMessagesCreate
+      .mockResolvedValueOnce(
+        mockApiResponse(
+          JSON.stringify({
+            add: [
+              {
+                topic: 'work',
+                text: 'Alex has a new job at Northwind',
+                evidence: 'offer letter from Northwind',
+              },
+            ],
+            retire: [],
+            stale_config: [
+              { key: 'work', reason: 'Started a new job', evidence: 'offer letter from Northwind' },
+            ],
+          }),
+        ),
+      ) // context review
+      .mockResolvedValueOnce(
+        mockApiResponse(
+          JSON.stringify({ title: 'T', sections: [{ heading: 'Executive Brief', items: [] }] }),
+        ),
+      ) // brief
+      .mockResolvedValueOnce(mockApiResponse('[]')) // memory
+      .mockResolvedValueOnce(mockApiResponse('{"issues":[]}')); // fact check
+    mockReadFileSync.mockImplementation((p: unknown) =>
+      String(p).includes('system.md') ? 'System prompt.' : '{}',
+    );
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const brief = await core.generateBrief(
+      {
+        model: 'claude-sonnet-4-20250514',
+        output_dir: '/tmp/output',
+        living_context: { enabled: true },
+        context: { work: 'Alex works at Example Corp.' },
+      },
+      payload,
+      [],
+      { applyActions: true },
+    );
+
+    const system = (mockMessagesCreate.mock.calls[1][0] as { system: string }).system;
+    expect(system).toContain('## Recent household changes (learned from the data)');
+    expect(system).toContain('Alex has a new job at Northwind');
+    const housekeeping = brief.sections.find((s) => s.heading === 'Housekeeping');
+    expect(housekeeping?.items?.map((i) => i.label)).toEqual([
+      'Learned: Alex has a new job at Northwind',
+      'Update the "work" context in config.yaml',
+    ]);
+    expect(mockWriteFileSync.mock.calls.some((c) => String(c[0]).endsWith('living.json'))).toBe(
+      true,
+    );
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toContain(
+      '  Context: 1 fact(s) learned, 0 retired, 1 config entry flagged.',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('reads the living context on a preview but never reviews or saves it', async () => {
+    mockMessagesCreate
+      .mockResolvedValueOnce(
+        mockApiResponse(
+          JSON.stringify({ title: 'T', sections: [{ heading: 'Executive Brief', items: [] }] }),
+        ),
+      )
+      .mockResolvedValueOnce(mockApiResponse('[]'))
+      .mockResolvedValueOnce(mockApiResponse('{"issues":[]}'));
+    mockReadFileSync.mockImplementation((p: unknown) => {
+      const path = String(p);
+      if (path.includes('system.md')) return 'System prompt.';
+      if (path.endsWith('living.json'))
+        return JSON.stringify({
+          facts: [
+            {
+              id: '1',
+              topic: 'trip',
+              text: 'Away Dec 3-8',
+              since: '2026-10-01',
+              until: '2099-01-01',
+              source: 's',
+            },
+          ],
+        });
+      return '{}';
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+
+    await core.generateBrief(
+      {
+        model: 'claude-sonnet-4-20250514',
+        output_dir: '/tmp/output',
+        living_context: { enabled: true },
+      },
+      '[]',
+    );
+
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(3);
+    expect((mockMessagesCreate.mock.calls[0][0] as { system: string }).system).toContain(
+      'Away Dec 3-8',
+    );
+    expect(mockWriteFileSync.mock.calls.some((c) => String(c[0]).endsWith('living.json'))).toBe(
+      false,
+    );
+  });
+
   it('should include runtime errors in error brief', async () => {
     // Add a runtime error before generating
     core.runtimeErrors.add('test_pipeline', 'something broke', 'error');

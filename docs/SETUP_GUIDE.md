@@ -693,6 +693,7 @@ connectors:
 | `notify_webhook` | none | URL posted to as `{title, message}` when a brief can't be written, isn't printed, gets stuck in the print queue, or a connector fails two scheduled mornings running. One short ASCII line, so it survives an SMS gateway. |
 | `heartbeat_url` | none | Fetched after every scheduled run that produced and printed a brief — e.g. a healthchecks.io check, as a dead-man's switch for runs that never start. |
 | `feedback_notes` | none | Your own notes to the writer (see [Your own feedback](#your-own-feedback)). |
+| `living_context` | off | Learn household changes from the data, with evidence (see [Living context](#living-context)). |
 | `connector_timeout_ms` | `60000` | Per-connector deadline. A connector that hangs past this is abandoned and noted in the brief. |
 
 ```yaml
@@ -722,6 +723,34 @@ An expired entry is left out. A prose entry whose dates have all passed (for
 example "trip May 7-25, 2026" in August) is still given to the writer but
 marked as history, and the weekly review day lists it under Housekeeping so
 you can update it.
+
+### Living context
+
+Prose goes stale in ways no date can predict — a job ends, an exam is
+passed, a trip is booked. Turn on the living context and callsheet keeps up
+with it from the data:
+
+```yaml
+living_context:
+  enabled: true
+  ignore: []        # text fragments; a learned fact containing one is vetoed
+```
+
+Each real run, a cheap model compares your context with the morning's data and
+proposes changes: a fact the data establishes ("accepted an offer at …", "trip
+booked for Dec 3-8"), retiring a fact it learned earlier that has stopped
+being true, or flagging a `context` entry the data contradicts. Every proposal
+must quote the email, event or task behind it, and the quote is checked against
+the data before anything is kept; at most three facts change per run. Learned
+facts are given to the writer as recent changes that take precedence over the
+older context, carry an expiry (the trip's last day, otherwise 60 days), and
+live in `output/context/living.json`.
+
+Your `config.yaml` is never edited. What changed is printed under Housekeeping
+on the day it changed — "Learned: …", "No longer true: …", "Update the "work"
+context in config.yaml" — so you can see what callsheet now believes, and a
+flagged entry stays on the weekly Housekeeping list until you edit it. If it
+learned something wrong, add a fragment of it to `ignore`.
 
 ### Delivery status
 

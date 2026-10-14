@@ -68,6 +68,10 @@ Turn it on with `task_coach: { enabled: true }`. Alongside the brief, Claude ret
 
 It never deletes, closes or rewrites a task, and writes nothing on a dashboard preview. Stuck tasks (long overdue, rescheduled again and again, sitting in an inbox for weeks) are asked about once, then left alone for a week. See [the setup guide](docs/SETUP_GUIDE.md#task-coach) for the options.
 
+## Context that keeps itself current
+
+The household context you write in config goes stale — plans end, jobs change. Context entries can carry an `until` date, prose whose dates have all passed is marked as history, and with `living_context` turned on callsheet learns changes from the data itself: each one backed by a quote from an email, event or task, printed under Housekeeping the day it is learned, and expiring on its own. Config is never edited; entries the data contradicts are listed for you to update.
+
 ## Reliability
 
 A printed brief that silently stops is worse than none, so a run is only "done" when the page has come out of the printer:
@@ -162,6 +166,7 @@ callsheet/
 │   ├── review.ts                  # Pre-print review: dedupe + evidence-bound fact check
 │   ├── autoclose.ts               # Close Todoist tasks that email/transactions prove done
 │   ├── context.ts                 # Household context with expiry and staleness checks
+│   ├── living.ts                  # Living context: household changes learned from the data
 │   ├── print.ts                   # CUPS printing with retry and job confirmation
 │   ├── status.ts                  # Run status, failure streaks, health evaluation
 │   ├── llm.ts                     # Shared helpers for model responses
