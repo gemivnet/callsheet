@@ -13,9 +13,13 @@ const mockGetAccounts = jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]
 const mockGetCategories = jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]);
 const mockGetPayees = jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]);
 const mockGetTransactions = jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]);
-const mockGetBudgetMonth = jest.fn<() => Promise<unknown>>().mockResolvedValue({ categoryGroups: [] });
+const mockGetBudgetMonth = jest
+  .fn<() => Promise<unknown>>()
+  .mockResolvedValue({ categoryGroups: [] });
 const mockShutdown = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-const mockIntegerToAmount = jest.fn<(n: number) => number>().mockImplementation((n: number) => n / 100);
+const mockIntegerToAmount = jest
+  .fn<(n: number) => number>()
+  .mockImplementation((n: number) => n / 100);
 
 jest.unstable_mockModule('@actual-app/api', () => ({
   default: {
@@ -61,9 +65,7 @@ function daysAgo(n: number): string {
 
 function resetMocks() {
   jest.clearAllMocks();
-  mockGetAccounts.mockResolvedValue([
-    { id: 'acct1', name: 'Checking' },
-  ]);
+  mockGetAccounts.mockResolvedValue([{ id: 'acct1', name: 'Checking' }]);
   mockGetCategories.mockResolvedValue([
     { id: 'cat1', name: 'Groceries' },
     { id: 'cat2', name: 'Dining' },
@@ -73,9 +75,33 @@ function resetMocks() {
     { id: 'pay2', name: 'Employer Inc' },
   ]);
   mockGetTransactions.mockResolvedValue([
-    { id: 'tx1', date: daysAgo(2), amount: -5000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: 'weekly shop' },
-    { id: 'tx2', date: daysAgo(1), amount: -2500, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
-    { id: 'tx3', date: daysAgo(3), amount: 100000, payee: 'pay2', category: '', account: 'acct1', notes: 'paycheck' },
+    {
+      id: 'tx1',
+      date: daysAgo(2),
+      amount: -5000,
+      payee: 'pay1',
+      category: 'cat1',
+      account: 'acct1',
+      notes: 'weekly shop',
+    },
+    {
+      id: 'tx2',
+      date: daysAgo(1),
+      amount: -2500,
+      payee: 'pay1',
+      category: 'cat2',
+      account: 'acct1',
+      notes: '',
+    },
+    {
+      id: 'tx3',
+      date: daysAgo(3),
+      amount: 100000,
+      payee: 'pay2',
+      category: '',
+      account: 'acct1',
+      notes: 'paycheck',
+    },
   ]);
   mockGetBudgetMonth.mockResolvedValue({
     categoryGroups: [
@@ -211,14 +237,23 @@ describe('actual-budget connector', () => {
       expect(txns[2].date).toBe(daysAgo(3));
     });
 
-    it('should generate over_budget alert when pctUsed >= 1.0', async () => {
+    it('does not call a category spent exactly to budget over budget', async () => {
+      mockGetBudgetMonth.mockResolvedValue({
+        categoryGroups: [
+          { name: 'Food', categories: [{ name: 'Groceries', budgeted: 5000, spent: -5000 }] },
+        ],
+      });
+      const result = await create(baseConfig).fetch();
+      const alerts = (result.data as { budgetAlerts: { status: string }[] }).budgetAlerts;
+      expect(alerts.filter((a) => a.status === 'over_budget')).toEqual([]);
+    });
+
+    it('should generate over_budget alert when spending exceeds the budget', async () => {
       mockGetBudgetMonth.mockResolvedValue({
         categoryGroups: [
           {
             name: 'Food',
-            categories: [
-              { name: 'Groceries', budgeted: 5000, spent: -6000, balance: -1000 },
-            ],
+            categories: [{ name: 'Groceries', budgeted: 5000, spent: -6000, balance: -1000 }],
           },
         ],
       });
@@ -274,9 +309,7 @@ describe('actual-budget connector', () => {
         categoryGroups: [
           {
             name: 'Food',
-            categories: [
-              { name: 'Groceries', budgeted: 20000, spent: -5000, balance: 15000 },
-            ],
+            categories: [{ name: 'Groceries', budgeted: 20000, spent: -5000, balance: 15000 }],
           },
         ],
       });
@@ -428,7 +461,15 @@ describe('actual-budget connector', () => {
 
     it('should fall back to raw IDs when lookup maps have no match', async () => {
       mockGetTransactions.mockResolvedValue([
-        { id: 'tx1', date: daysAgo(2), amount: -5000, payee: 'unknown-payee', category: 'unknown-cat', account: 'acct1', notes: '' },
+        {
+          id: 'tx1',
+          date: daysAgo(2),
+          amount: -5000,
+          payee: 'unknown-payee',
+          category: 'unknown-cat',
+          account: 'acct1',
+          notes: '',
+        },
       ]);
 
       const connector = create(baseConfig);
@@ -440,8 +481,8 @@ describe('actual-budget connector', () => {
       expect(txns[0].category).toBe('unknown-cat');
     });
 
-    it('should cap recentTransactions at 30', async () => {
-      const manyTxns = Array.from({ length: 50 }, (_, i) => ({
+    it('should cap recentTransactions at 60', async () => {
+      const manyTxns = Array.from({ length: 80 }, (_, i) => ({
         id: `tx${i}`,
         date: daysAgo(2),
         amount: -100,
@@ -457,7 +498,85 @@ describe('actual-budget connector', () => {
 
       const data = result.data as Record<string, unknown>;
       const txns = data.recentTransactions as unknown[];
-      expect(txns.length).toBe(30);
+      expect(txns.length).toBe(60);
+    });
+
+    it('leaves transfers between own accounts out of spending and income', async () => {
+      mockGetTransactions.mockResolvedValue([
+        {
+          id: 'a',
+          date: daysAgo(1),
+          amount: -5000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
+        {
+          id: 'b',
+          date: daysAgo(1),
+          amount: -3000000,
+          payee: 'pay1',
+          category: '',
+          account: 'acct1',
+          notes: '',
+          transfer_id: 'b2',
+        },
+        {
+          id: 'c',
+          date: daysAgo(1),
+          amount: 3000000,
+          payee: 'pay1',
+          category: '',
+          account: 'acct1',
+          notes: '',
+          transfer_id: 'c2',
+        },
+      ]);
+
+      const result = await create(baseConfig).fetch();
+
+      const summary = (result.data as { summary: Record<string, unknown> }).summary;
+      expect(summary.totalSpent).toBe(50);
+      expect(summary.totalIncome).toBe(0);
+      expect(summary.transactionCount).toBe(1);
+      expect(result.description).toContain('2 transfers between own accounts excluded');
+    });
+
+    it('reports how fresh the data is, and flags a stopped import', async () => {
+      mockGetTransactions.mockResolvedValue([
+        {
+          id: 'a',
+          date: daysAgo(5),
+          amount: -5000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
+      ]);
+      const result = await create(baseConfig).fetch();
+      const summary = (result.data as { summary: Record<string, unknown> }).summary;
+      expect(summary.latestTransactionDate).toBe(daysAgo(5));
+      expect(summary.daysSinceLatestTransaction).toBe(5);
+      expect(summary.stale).toBe(true);
+      expect(result.description).toMatch(/^\*\*STALE DATA\*\*: the newest transaction is from/);
+    });
+
+    it('flags a window with no transactions at all as stale', async () => {
+      mockGetTransactions.mockResolvedValue([]);
+      const result = await create(baseConfig).fetch();
+      const summary = (result.data as { summary: Record<string, unknown> }).summary;
+      expect(summary.latestTransactionDate).toBeNull();
+      expect(summary.stale).toBe(true);
+      expect(result.description).toContain('no transactions at all');
+    });
+
+    it('does not flag fresh data', async () => {
+      const result = await create(baseConfig).fetch();
+      const summary = (result.data as { summary: Record<string, unknown> }).summary;
+      expect(summary.stale).toBe(false);
+      expect(result.description).not.toContain('STALE');
     });
 
     it('should skip unbudgeted categories (budgeted <= 0) in budget alerts', async () => {
@@ -465,9 +584,7 @@ describe('actual-budget connector', () => {
         categoryGroups: [
           {
             name: 'Income',
-            categories: [
-              { name: 'Salary', budgeted: 0, spent: -1000, balance: -1000 },
-            ],
+            categories: [{ name: 'Salary', budgeted: 0, spent: -1000, balance: -1000 }],
           },
         ],
       });
@@ -528,7 +645,15 @@ describe('actual-budget connector', () => {
 
     it('should handle null/undefined payee, category, and notes in transactions', async () => {
       mockGetTransactions.mockResolvedValue([
-        { id: 'tx1', date: daysAgo(2), amount: -1000, payee: null, category: null, account: 'acct1', notes: null },
+        {
+          id: 'tx1',
+          date: daysAgo(2),
+          amount: -1000,
+          payee: null,
+          category: null,
+          account: 'acct1',
+          notes: null,
+        },
       ]);
 
       const connector = create(baseConfig);
@@ -554,9 +679,7 @@ describe('actual-budget connector', () => {
 
     it('should handle missing categories array in a category group', async () => {
       mockGetBudgetMonth.mockResolvedValue({
-        categoryGroups: [
-          { name: 'Empty Group' },
-        ],
+        categoryGroups: [{ name: 'Empty Group' }],
       });
 
       const connector = create(baseConfig);
@@ -572,9 +695,7 @@ describe('actual-budget connector', () => {
         categoryGroups: [
           {
             name: 'Food',
-            categories: [
-              { name: 'Unknown', budgeted: null, spent: null, balance: 0 },
-            ],
+            categories: [{ name: 'Unknown', budgeted: null, spent: null, balance: 0 }],
           },
         ],
       });
@@ -590,11 +711,17 @@ describe('actual-budget connector', () => {
 
     it('should fall back to acct.name when account ID not in accountMap', async () => {
       // Transaction references an account ID that doesn't match any account's id
-      mockGetAccounts.mockResolvedValue([
-        { id: 'acct1', name: 'Checking' },
-      ]);
+      mockGetAccounts.mockResolvedValue([{ id: 'acct1', name: 'Checking' }]);
       mockGetTransactions.mockResolvedValue([
-        { id: 'tx1', date: daysAgo(2), amount: -1000, payee: 'pay1', category: 'cat1', account: 'unknown-acct', notes: '' },
+        {
+          id: 'tx1',
+          date: daysAgo(2),
+          amount: -1000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'unknown-acct',
+          notes: '',
+        },
       ]);
 
       const connector = create(baseConfig);
@@ -650,11 +777,43 @@ describe('actual-budget connector', () => {
       // Two distinct weeks of Flying spending: $200 last week, $1000 this week.
       mockGetTransactions.mockResolvedValue([
         // Current period (0-7 days ago)
-        { id: 't1', date: daysAgo(1), amount: -50000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
-        { id: 't2', date: daysAgo(3), amount: -50000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        {
+          id: 't1',
+          date: daysAgo(1),
+          amount: -50000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
+        {
+          id: 't2',
+          date: daysAgo(3),
+          amount: -50000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
         // Previous period (7-14 days ago)
-        { id: 't3', date: daysAgo(9), amount: -10000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
-        { id: 't4', date: daysAgo(12), amount: -10000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        {
+          id: 't3',
+          date: daysAgo(9),
+          amount: -10000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
+        {
+          id: 't4',
+          date: daysAgo(12),
+          amount: -10000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
       ]);
 
       const connector = create(baseConfig);
@@ -673,10 +832,34 @@ describe('actual-budget connector', () => {
     it('should sort weekOverWeekByCategory by absolute change descending', async () => {
       mockGetTransactions.mockResolvedValue([
         // Big jump in Groceries (cat1): 0 -> 1000
-        { id: 't1', date: daysAgo(1), amount: -100000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        {
+          id: 't1',
+          date: daysAgo(1),
+          amount: -100000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
         // Small drop in Dining (cat2): 50 -> 10
-        { id: 't2', date: daysAgo(2), amount: -1000, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
-        { id: 't3', date: daysAgo(9), amount: -5000, payee: 'pay1', category: 'cat2', account: 'acct1', notes: '' },
+        {
+          id: 't2',
+          date: daysAgo(2),
+          amount: -1000,
+          payee: 'pay1',
+          category: 'cat2',
+          account: 'acct1',
+          notes: '',
+        },
+        {
+          id: 't3',
+          date: daysAgo(9),
+          amount: -5000,
+          payee: 'pay1',
+          category: 'cat2',
+          account: 'acct1',
+          notes: '',
+        },
       ]);
 
       const connector = create(baseConfig);
@@ -692,7 +875,15 @@ describe('actual-budget connector', () => {
     it('should report pctChange as null when previousWeek is zero', async () => {
       mockGetTransactions.mockResolvedValue([
         // Only current-period spending in Groceries; no previous-period baseline
-        { id: 't1', date: daysAgo(2), amount: -10000, payee: 'pay1', category: 'cat1', account: 'acct1', notes: '' },
+        {
+          id: 't1',
+          date: daysAgo(2),
+          amount: -10000,
+          payee: 'pay1',
+          category: 'cat1',
+          account: 'acct1',
+          notes: '',
+        },
       ]);
 
       const connector = create(baseConfig);
@@ -734,7 +925,15 @@ describe('actual-budget connector', () => {
     it('should exclude income (positive amounts) from weekOverWeekByCategory', async () => {
       mockGetTransactions.mockResolvedValue([
         // Income should not appear in spending trends
-        { id: 't1', date: daysAgo(1), amount: 100000, payee: 'pay2', category: 'cat1', account: 'acct1', notes: 'paycheck' },
+        {
+          id: 't1',
+          date: daysAgo(1),
+          amount: 100000,
+          payee: 'pay2',
+          category: 'cat1',
+          account: 'acct1',
+          notes: 'paycheck',
+        },
       ]);
 
       const connector = create(baseConfig);
