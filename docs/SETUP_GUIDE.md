@@ -287,6 +287,12 @@ The calendar works out who each event is for: an event whose title starts with a
     exclude_patterns: ["schedule reference", "not attending"]
 ```
 
+Health appointments never reach the writer as written. An event whose title names a clinician, a credential, a specialty, a procedure or a place of care, or whose location is a clinic or hospital, arrives as "Private appointment" with `health: true` and no place or notes, so the page shows "Appointment" with the person and the time. A visit to the vet is left alone. Practices the built-in medical vocabulary cannot recognise (a clinic known only by its brand name) go in `private_patterns`, as case-insensitive text fragments:
+
+```yaml
+    private_patterns: ["brightside"]
+```
+
 `lookback_days` controls how much history is available for the week-in-review and for the per-person event counts. `event_categories` optionally labels recurring kinds of event so the brief can cite a count rather than tallying by hand:
 
 ```yaml

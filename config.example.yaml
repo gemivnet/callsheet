@@ -104,6 +104,10 @@ connectors:
     # Optional. Drop events that sit on a calendar for reference only
     # (case-insensitive regexes matched against title and description).
     # exclude_patterns: ["schedule reference", "not attending"]
+    # Optional. Health appointments always reach the brief as "Private
+    # appointment", with no clinician, place or notes. Add practice names the
+    # built-in medical vocabulary cannot recognise (case-insensitive text).
+    # private_patterns: ["brightside"]
     # Hours that count as the day when working out each person's free time.
     # day_start_hour: 8
     # day_end_hour: 21

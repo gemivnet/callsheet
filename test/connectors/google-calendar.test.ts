@@ -40,6 +40,8 @@ const {
   allDaySpan,
   findConflicts,
   freeWindows,
+  isHealthAppointment,
+  PRIVATE_TITLE,
 } = await import('../../src/connectors/google-calendar.js');
 const { PASS, FAIL, INFO } = await import('../../src/test-icons.js');
 
@@ -797,5 +799,77 @@ describe('calendar connector: roster, spans, exclusions, conflicts', () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+});
+
+describe('health appointments', () => {
+  it('recognises clinicians, credentials, specialties, procedures and places of care', () => {
+    for (const title of [
+      'Dr. Smith (Dermatology)',
+      'Jane Doe, Psy.D.',
+      'Alex Therapy',
+      'Dental cleaning',
+      'Annual check-up',
+      'Follow-up: Cardiology',
+      'MRI',
+      'Flu shot',
+    ]) {
+      expect([title, isHealthAppointment(title)]).toEqual([title, true]);
+    }
+    expect(isHealthAppointment('Visit', 'Lakeside Medical Center, Suite 4')).toBe(true);
+  });
+
+  it('leaves ordinary events, vet visits and street addresses alone', () => {
+    for (const title of ['Practice', 'Written exam', 'In Office', 'Vet: Dr. Paws', 'Cat checkup']) {
+      expect([title, isHealthAppointment(title)]).toEqual([title, false]);
+    }
+    expect(isHealthAppointment('Dinner', '12 Lake Shore Dr Springfield')).toBe(false);
+  });
+
+  it("uses the household's own patterns for practices the vocabulary cannot know", () => {
+    expect(isHealthAppointment('Brightside appt')).toBe(false);
+    expect(isHealthAppointment('Brightside appt', '', ['brightside'])).toBe(true);
+  });
+
+  it('sends a health appointment to the writer without its clinician, place or notes', async () => {
+    setupCredsAndToken();
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date());
+    mockEventsList.mockImplementation((args: unknown) => {
+      const { timeMin } = args as { timeMin: string };
+      if (!timeMin.startsWith(today)) return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({
+        data: {
+          items: [
+            {
+              id: 'h',
+              summary: 'Jo: Dr. Smith (Dermatology)',
+              location: '1 Main St',
+              description: 'Bring the referral',
+              start: { dateTime: `${today}T15:00:00Z` },
+              end: { dateTime: `${today}T15:30:00Z` },
+            },
+          ],
+        },
+      });
+    });
+
+    const result = await create({
+      enabled: true,
+      timezone: 'UTC',
+      lookback_days: 0,
+      household_names: ['Alex', 'Jo'],
+      accounts: [{ name: 'Alex', calendar_ids: ['primary'] }],
+    }).fetch();
+
+    const [event] = result.data.today as Record<string, unknown>[];
+    expect(event).toMatchObject({
+      summary: PRIVATE_TITLE,
+      location: '',
+      description: '',
+      health: true,
+      people: ['Jo'],
+    });
+    expect(JSON.stringify(result.data)).not.toMatch(/Smith|Dermatology|Main St|referral/);
+    expect(result.description).toContain('`health: true`');
   });
 });

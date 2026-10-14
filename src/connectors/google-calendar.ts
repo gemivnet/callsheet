@@ -286,11 +286,48 @@ export function freeWindows(
   return out;
 }
 
+/**
+ * Generic medical vocabulary: a clinician, a credential, a specialty, a
+ * procedure or a place of care. The page sits on a kitchen counter, and the
+ * writer, told never to print these, still printed a clinician's name and the
+ * kind of appointment. Matching titles never reach it.
+ */
+const HEALTH_TITLE = [
+  /\b(?:dr\.?|doctor)\s/i,
+  /,\s*(?:M\.?D|D\.?O|D\.?D\.?S|D\.?M\.?D|Psy\.?\s?D|Ph\.?D|LCSW|LPC|LMFT|LMHC|PA-C|N\.?P|DPT|O\.?D)\b/,
+  /\b(?:therap|counsel(?:l)?ing|psychiatr|psycholog|dentist|dental|orthodont|dermatolog|cardiolog|oncolog|neurolog|urolog|gastroenterolog|endocrinolog|rheumatolog|gyn|ob\/?gyn|obstetric|pediatric|podiatr|chiropract|optometr|ophthalmolog|physio|allerg|audiolog|radiolog|mammogra|colonoscop|endoscop|biops|ultrasound|bloodwork|infusion|vaccin|immuniz|clinic|hospital|surger|surgical|medical|telehealth|pharmac|prescription|dialysis|chemo)/i,
+  /\b(?:mri|ct scan|x-?ray|blood (?:work|draw|test)|lab work|flu shot|urgent care|physical exam|check-?up|mental health|health cent(?:er|re)|post-op|pre-op)\b/i,
+];
+const HEALTH_PLACE =
+  /\b(?:medical|clinic|hospital|urgent care|dental|surgery center|health cent(?:er|re))\b/i;
+const ANIMAL_CARE = /\b(?:vet|veterinar\w*|animal|pets?|cats?|dogs?|kittens?|pupp(?:y|ies))\b/i;
+
+/** What a health appointment is called on its way to the writer. */
+export const PRIVATE_TITLE = 'Private appointment';
+
+/**
+ * True when an event is someone's health appointment: its title names medical
+ * care, it takes place somewhere that does, or its title contains one of the
+ * household's own `private_patterns` (a practice known only by its name). A
+ * visit to the vet is not one.
+ */
+export function isHealthAppointment(
+  title: string,
+  location = '',
+  privatePatterns: string[] = [],
+): boolean {
+  const lower = title.toLowerCase();
+  if (privatePatterns.some((p) => p && lower.includes(p.toLowerCase()))) return true;
+  if (ANIMAL_CARE.test(title)) return false;
+  return HEALTH_TITLE.some((re) => re.test(title)) || HEALTH_PLACE.test(location);
+}
+
 function simplifyEvent(
   e: TaggedEvent,
   tz: string,
   todayYmd: string,
   householdNames: string[] = [],
+  privatePatterns: string[] = [],
 ) {
   const start = e.start ?? {};
   const end = e.end ?? {};
@@ -310,8 +347,11 @@ function simplifyEvent(
     whenLabel = relativeDayLabel(todayYmd, dateLabel, dayOfWeek);
   }
 
-  const summary = e.summary ?? '(no title)';
-  const who = attributeByTitle(summary, e.people, householdNames);
+  const title = e.summary ?? '(no title)';
+  // Attribution reads the real title; everything after it sees the private one.
+  const who = attributeByTitle(title, e.people, householdNames);
+  const health = isHealthAppointment(title, e.location ?? '', privatePatterns);
+  const summary = health ? PRIVATE_TITLE : title;
   const span = allDay && rawStart && rawEnd ? allDaySpan(rawStart, rawEnd, todayYmd) : undefined;
   const endTimeLabel =
     !allDay && rawEnd ? (formatInTz(rawEnd, tz, false).timeLabel ?? undefined) : undefined;
@@ -320,9 +360,10 @@ function simplifyEvent(
     summary,
     start: rawStart,
     end: rawEnd,
-    location: e.location ?? '',
-    description: (e.description ?? '').slice(0, 200),
+    location: health ? '' : (e.location ?? ''),
+    description: health ? '' : (e.description ?? '').slice(0, 200),
     allDay,
+    ...(health ? { health: true } : {}),
     // Who the event is for. An event on two people's calendars keeps both
     // names, so a shared appointment is one event attended by two people;
     // a title naming a household member makes it that member's.
@@ -462,6 +503,7 @@ export function create(config: ConnectorConfig): Connector {
       const accounts = config.accounts as CalendarAccount[] | undefined;
       const categories = (config.event_categories as EventCategory[] | undefined) ?? [];
       const householdNames = (config.household_names as string[] | undefined) ?? [];
+      const privatePatterns = (config.private_patterns as string[] | undefined) ?? [];
       // Events that exist on the calendar for reference only (a team's whole
       // schedule, "not attending"). Printing them crowded out real plans and
       // produced invented conflicts with games nobody was going to.
@@ -622,7 +664,8 @@ export function create(config: ConnectorConfig): Connector {
           if (drop) omitted++;
           return !drop;
         });
-      const simplify = (e: TaggedEvent) => simplifyEvent(e, tz, today_ymd, householdNames);
+      const simplify = (e: TaggedEvent) =>
+        simplifyEvent(e, tz, today_ymd, householdNames, privatePatterns);
       const todayEvents = keep(mergeAndSort(allTodayEvents)).map(simplify);
       const upcomingEvents = keep(mergeAndSort(allUpcomingEvents)).map(simplify);
       const recentEvents = keep(mergeAndSort(allRecentEvents)).map(simplify);
@@ -703,6 +746,9 @@ export function create(config: ConnectorConfig): Connector {
           "only those, and never treat two different people's events as a clash. " +
           "`free_time_today` lists each person's open stretches today, for suggesting when a task " +
           'fits. ' +
+          `An event with \`health: true\` is a health appointment, renamed "${PRIVATE_TITLE}" with ` +
+          'its place and notes removed: print it as "Appointment" with the person and time, and never ' +
+          'guess what it is. ' +
           '**CRITICAL: any number you state about how many events someone had must be read from ' +
           '`aggregates.by_person`, which is computed from this data. Do NOT count events yourself — ' +
           'hand-counting has produced both over- and under-counts on correct data.** ' +
