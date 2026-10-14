@@ -131,8 +131,9 @@ export function flightCategory(
   else if (ceil <= 3000 || vis <= 5) category = 'MVFR';
   else category = 'VFR';
 
-  const basis: CategoryBasis =
-    ceilingKnown && visKnown ? 'ceiling+visibility' : visKnown ? 'visibility only' : 'ceiling only';
+  let basis: CategoryBasis = 'ceiling only';
+  if (ceilingKnown && visKnown) basis = 'ceiling+visibility';
+  else if (visKnown) basis = 'visibility only';
   if (category === 'VFR' && basis !== 'ceiling+visibility') return { basis };
   return { category, basis };
 }
@@ -802,7 +803,7 @@ export function create(config: ConnectorConfig): Connector {
         source: 'aviation_weather',
         description:
           `Aviation weather for ${stationStr}. Current: ${current || 'no observations'}. ` +
-          `${tafSummary ? `${tafSummary}. ` : 'No TAFs. '}` +
+          (tafSummary ? `${tafSummary}. ` : 'No TAFs. ') +
           (silent.length
             ? `No METAR or TAF at all for ${silent.join(', ')} — say so if someone flies there; never borrow another field's weather without naming the field. `
             : '') +
