@@ -134,6 +134,8 @@ export function create(config: ConnectorConfig): Connector {
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
         // Fetch transactions across all accounts (full trend window)
+        let latestDate: string | undefined;
+        let transfersExcluded = 0;
         const allTransactions: Record<string, unknown>[] = [];
         const previousPeriodTransactions: Record<string, unknown>[] = [];
         for (const account of accounts) {
@@ -150,7 +152,16 @@ export function create(config: ConnectorConfig): Connector {
             category: string;
             notes: string;
             account: string;
+            transfer_id?: string | null;
           }[]) {
+            if (!latestDate || t.date > latestDate) latestDate = t.date;
+            // A transfer between the household's own accounts is not spending
+            // or income. Counting both legs had briefs reporting "$104K spent"
+            // in a week and a credit-line draw as income.
+            if (t.transfer_id) {
+              transfersExcluded++;
+              continue;
+            }
             const txn = {
               date: t.date,
               amount: api.utils.integerToAmount(t.amount),
@@ -251,7 +262,9 @@ export function create(config: ConnectorConfig): Connector {
               const pctUsed = spent / budgeted;
               const paceRatio = pctUsed / monthProgress; // >1 means ahead of pace
 
-              if (pctUsed >= 1.0) {
+              // Strictly over: a category spent exactly to its budget is on
+              // budget, and flagging it produced a dozen false alerts a day.
+              if (pctUsed > 1.0) {
                 budgetAlerts.push({
                   category: cat.name,
                   group: group.name,
@@ -280,10 +293,34 @@ export function create(config: ConnectorConfig): Connector {
           // Budget data not available — skip alerts silently
         }
 
+        // How fresh the data is. A bank import that stops looks exactly like a
+        // week with no spending; briefs reported "$0 spent" as fact.
+        const todayStr = fmt(endDate);
+        const daysSinceLatest = latestDate
+          ? Math.round(
+              (Date.parse(`${todayStr}T00:00:00Z`) - Date.parse(`${latestDate}T00:00:00Z`)) /
+                86_400_000,
+            )
+          : null;
+        const stale = daysSinceLatest === null || daysSinceLatest > 3;
+        const staleNote = stale
+          ? `**STALE DATA**: ${
+              latestDate
+                ? `the newest transaction is from ${latestDate} (${daysSinceLatest} days ago)`
+                : `there are no transactions at all in the last ${lookbackDays * 2} days`
+            } — the bank import has probably stopped. Say so once, briefly, and do NOT report totals, ` +
+            'trends or "$0 spent" as if they were real. '
+          : '';
+
         return {
           source: 'actual_budget',
           description:
-            `Actual Budget: ${allTransactions.length} transactions over the last ${lookbackDays} days. ` +
+            staleNote +
+            `Actual Budget: ${allTransactions.length} transactions over the last ${lookbackDays} days` +
+            (transfersExcluded
+              ? ` (${transfersExcluded} transfers between own accounts excluded)`
+              : '') +
+            '. ' +
             `Total spending: $${Math.round(totalSpent * 100) / 100}, Total income: $${Math.round(totalIncome * 100) / 100}. ` +
             "**Focus on TRENDS, not absolute budget percentages** — many of this household's " +
             '"budget" categories are aspirational tracking buckets, not real spending caps, so ' +
@@ -298,11 +335,14 @@ export function create(config: ConnectorConfig): Connector {
               totalIncome: Math.round(totalIncome * 100) / 100,
               periodDays: lookbackDays,
               transactionCount: allTransactions.length,
+              latestTransactionDate: latestDate ?? null,
+              daysSinceLatestTransaction: daysSinceLatest,
+              stale,
             },
             spendingByCategory,
             weekOverWeekByCategory,
             budgetAlerts,
-            recentTransactions: allTransactions.slice(0, 30),
+            recentTransactions: allTransactions.slice(0, 60),
           },
           priorityHint: 'normal',
         };
