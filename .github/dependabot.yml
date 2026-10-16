@@ -16,6 +16,11 @@ updates:
         update-types: [minor, patch]
     # Major updates get individual PRs since they may have breaking changes
     open-pull-requests-limit: 10
+    ignore:
+      # @types/node follows the Node major the image runs (node:24-alpine), not
+      # the newest Node line; move it together with the base image.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
