@@ -36,6 +36,11 @@ jobs:
       - name: Prettier
         run: yarn format:check
 
+      # The Docker build runs this too, but only on a push to main; without it a
+      # PR that breaks the compile (a TypeScript major, a changed export) passes.
+      - name: Build
+        run: yarn build
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -58,7 +63,7 @@ jobs:
           JEST_JUNIT_OUTPUT_NAME: junit.xml
 
       - name: Test report annotations
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@v3
         if: always() && hashFiles('reports/junit.xml') != ''
         with:
           name: Jest Results
