@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import type { AutoCloseRecommendation, CallsheetConfig } from './types.js';
 import { logUsage } from './usage.js';
 import { todayYmd, shiftYmd } from './dates.js';
-import { extractResponseText, normaliseForQuote } from './llm.js';
+import { createMessage, extractResponseText, normaliseForQuote } from './llm.js';
 
 /** At most this many tasks are closed in one run, however sure the model is. */
 const MAX_CLOSURES_PER_RUN = 3;
@@ -204,7 +204,7 @@ export async function detectResolvableTasks(
   if (!input.tasks.length || !input.evidence.length) return [];
 
   try {
-    const response = await client.messages.create({
+    const response = await createMessage(client, {
       model,
       max_tokens: maxTokens,
       output_config: {

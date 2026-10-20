@@ -135,17 +135,21 @@ This is the only secret every setup needs. The rest depend on which connectors y
 In `config.yaml`, set the `model` field:
 
 ```yaml
-# The default: fast and capable (roughly $0.10-0.30/day, depending on how much
-# calendar, email and task data the household has)
-model: claude-sonnet-5-5
+# The default: the most capable model, and the best at connecting dots across
+# sources (roughly $0.30-0.95/day for the brief, depending on how much calendar,
+# email and task data the household has)
+model: claude-fable-5-1
 
-# Deeper reasoning, better cross-referencing (roughly twice the cost)
+# Close behind for well under half the brief's cost
 model: claude-opus-5-5
+
+# Fast and capable, the cheapest model that writes a good brief
+model: claude-sonnet-5-5
 ```
 
-Start with Sonnet. Switch to Opus after you've dialed in your connectors and context — the quality difference is noticeable in the Executive Brief section, where Claude connects dots across data sources.
+The quality difference shows most in the Executive Brief section, where Claude connects dots across data sources. If the bill matters more than that last step, Opus 5.5 or Sonnet 5.5 write a good brief for much less.
 
-The housekeeping passes (memory, self-critique, auto-close) always run on Claude Haiku 5.5, which costs a fraction of a cent per run. On models that support it, the brief request opts into Anthropic's server-side refusal fallback, so a request a safety classifier declines is retried on a fallback model instead of producing an error page.
+The housekeeping passes (living context, memory, fact check, auto-close) always run on Claude Opus 5.5, whichever model writes the brief. Between them they read more than twice the brief's input, so they are a large share of the bill; see [Understanding costs](#understanding-costs). On models that support it, every request opts into Anthropic's server-side refusal fallback, so a request a safety classifier declines is retried on a fallback model instead of producing an error page or a skipped pass.
 
 ---
 
@@ -608,7 +612,7 @@ Every brief is checked before it is rendered:
 
 - **Duplication is removed in code.** An Executive Brief item whose words are
   mostly one task's or email's words is that item again, and is dropped.
-- **Facts are checked against the data.** A cheap model looks for statements
+- **Facts are checked against the data.** The housekeeping model looks for statements
   the data contradicts, and must quote the wrong words, quote the data that
   contradicts them, and give the replacement. A correction is applied — as an
   exact string replacement — only when both quotes are found where they should
@@ -742,7 +746,7 @@ living_context:
   ignore: []        # text fragments; a learned fact containing one is vetoed
 ```
 
-Each real run, a cheap model compares your context with the morning's data and
+Each real run, the housekeeping model compares your context with the morning's data and
 proposes changes: a fact the data establishes ("accepted an offer at …", "trip
 booked for Dec 3-8"), retiring a fact it learned earlier that has stopped
 being true, or flagging a `context` entry the data contradicts. Every proposal
@@ -841,13 +845,13 @@ With `entities: []`, all sensors are pulled. Filter to specific entities to keep
 Claude is generating too much content. Trim connectors, tighten the prompt in `src/prompts/system.md`, or reduce `max_messages` for Gmail.
 
 ### Brief is too sparse
-Add more household context in `config.yaml`. Consider switching from Sonnet to Opus for richer analysis.
+Add more household context in `config.yaml`. If you moved the brief to a cheaper model, switching back to Fable 5.1 gives richer analysis.
 
 ---
 
 ## Understanding costs
 
-Every brief makes 3 Claude API calls (generation, memory extraction, self-critique). The dashboard tracks costs in the **Usage** page.
+Every brief makes five Claude API calls: the brief itself, plus four housekeeping passes on Opus 5.5 (living context review, memory extraction, fact check, auto-close). The dashboard tracks costs in the **Usage** page.
 
 Run `--test` to see your specific token breakdown:
 
@@ -860,15 +864,16 @@ Token budget breakdown:
   Est. output:      ~1,500 tokens
 ```
 
-Memory extraction and self-critique always run on Haiku and add roughly $0.03
-per brief regardless of which model writes it.
+Each housekeeping pass reads most of the day's data again, so together they
+send about two and a half times the brief's input, on Opus 5.5 whichever model
+writes the brief.
 
-Rough monthly costs at one brief/day, including those two passes:
+Rough monthly costs at one brief/day, including those passes:
 
-| Input tokens | Sonnet 5/month | Opus 5/month |
-|---|---|---|
-| ~5K (minimal) | ~$1.50 | ~$2.00 |
-| ~10K (typical) | ~$2.30 | ~$3.30 |
-| ~20K (heavy) | ~$3.50 | ~$5.50 |
+| Brief input tokens | Fable 5.1 | Opus 5.5 | Sonnet 5.5 |
+|---|---|---|---|
+| ~20K (light) | ~$17 | ~$12 | ~$10 |
+| ~50K (typical) | ~$35 | ~$24 | ~$21 |
+| ~85K (busy) | ~$56 | ~$39 | ~$33 |
 
 The biggest cost lever is connector data volume. Home Assistant with all sensors can easily be 15K+ tokens. Filter to specific entities to keep costs down.

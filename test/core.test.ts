@@ -1204,6 +1204,7 @@ describe('supportsServerFallback', () => {
   it('is on for the models that accept fallbacks: "default"', () => {
     expect(core.supportsServerFallback('claude-sonnet-5-5')).toBe(true);
     expect(core.supportsServerFallback('claude-opus-5-5')).toBe(true);
+    expect(core.supportsServerFallback('claude-fable-5-1')).toBe(true);
   });
 
   it('is off for models that do not', () => {
@@ -1213,9 +1214,9 @@ describe('supportsServerFallback', () => {
 });
 
 describe('model defaults', () => {
-  it('writes the brief on Sonnet 5.5 and does housekeeping on Haiku 5.5', () => {
-    expect(core.DEFAULT_MODEL).toBe('claude-sonnet-5-5');
-    expect(core.CRITIQUE_MODEL).toBe('claude-haiku-5-5');
+  it('writes the brief on Fable 5.1 and does housekeeping on Opus 5.5', () => {
+    expect(core.DEFAULT_MODEL).toBe('claude-fable-5-1');
+    expect(core.CRITIQUE_MODEL).toBe('claude-opus-5-5');
   });
 });
 

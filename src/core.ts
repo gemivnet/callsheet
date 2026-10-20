@@ -37,7 +37,7 @@ import {
   type LivingChanges,
 } from './living.js';
 import { printAndConfirm, type PrintOptions, type PrintResult } from './print.js';
-import { extractResponseText, stripJsonCodeFences } from './llm.js';
+import { createMessage, extractResponseText, stripJsonCodeFences } from './llm.js';
 import {
   applyCorrections,
   dedupeExecutiveBrief,
@@ -81,50 +81,29 @@ import {
 
 // Moved to their own modules; re-exported so existing imports keep working.
 export { printPdf } from './print.js';
-export { extractResponseText, stripJsonCodeFences } from './llm.js';
+export { extractResponseText, stripJsonCodeFences, supportsServerFallback } from './llm.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Model that writes the brief when config doesn't name one. */
-export const DEFAULT_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_MODEL = 'claude-fable-5-1';
 
-/** Cheap model for the housekeeping passes: memory, self-critique, auto-close. */
-export const CRITIQUE_MODEL = 'claude-haiku-5-5';
+/**
+ * Model for the housekeeping passes: living context, memory, fact check and
+ * auto-close. Together they read more than twice the brief's input every day,
+ * so they stay a tier below the writer; on Fable 5.1 they would cost several
+ * times what the brief does.
+ */
+export const CRITIQUE_MODEL = 'claude-opus-5-5';
 
 /**
  * Output budget for the housekeeping passes. Current small models think before
  * answering and that reasoning is drawn from the same budget, so the old
  * 512-2048 token caps would cut the JSON off mid-array — the exact failure that
- * silently lost memory on most runs for four months in 2026. Cheap at Haiku
- * prices; the passes also run at low effort.
+ * silently lost memory on most runs for four months in 2026. Output is a small
+ * share of what the passes cost, and they run at low effort.
  */
 const HOUSEKEEPING_MAX_TOKENS = 8_000;
-
-/**
- * Models that accept the server-side refusal fallback. On these, a request a
- * safety classifier declines is re-run on Anthropic's recommended fallback
- * model inside the same call instead of coming back empty — a household brief
- * full of medical and financial detail is exactly the kind of payload a
- * classifier can occasionally trip on.
- */
-const SERVER_FALLBACK_MODELS: ReadonlySet<string> = new Set([
-  'claude-sonnet-5-5',
-  'claude-opus-5-5',
-  'claude-opus-5',
-  'claude-fable-5-1',
-]);
-
-/** The parts of a Messages API response the pipeline reads, from either endpoint. */
-interface BriefResponse {
-  content: { type: string; text?: string }[];
-  stop_reason?: string | null;
-  usage: { input_tokens: number; output_tokens: number };
-}
-
-/** True when `model` accepts `fallbacks: "default"`. */
-export function supportsServerFallback(model: string): boolean {
-  return SERVER_FALLBACK_MODELS.has(model);
-}
 
 // ---------------------------------------------------------------------------
 // RuntimeErrors — global collector for any error conditions during a run.
@@ -573,7 +552,7 @@ async function generateMemoryInsights(
 ): Promise<MemoryInsight[]> {
   try {
     const today = todayYmd();
-    const response = await client.messages.create({
+    const response = await createMessage(client, {
       model,
       // 512 truncated the JSON array mid-string on most runs, so the parse
       // failed and a day's memory was silently lost.
@@ -1285,20 +1264,7 @@ export async function generateBrief(
         },
       ],
     };
-    // The fallback is a beta parameter, so models that take it go through the
-    // beta endpoint; the response carries the same content, stop_reason and
-    // usage either way.
-    const response = await withRetry<BriefResponse>(
-      () =>
-        supportsServerFallback(model)
-          ? client.beta.messages.create({
-              ...(params as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming),
-              betas: ['server-side-fallback-2026-07-01'],
-              fallbacks: 'default',
-            })
-          : client.messages.create(params),
-      'Claude API call',
-    );
+    const response = await withRetry(() => createMessage(client, params), 'Claude API call');
 
     logUsage(outputDir, model, 'brief', response.usage.input_tokens, response.usage.output_tokens);
 
@@ -1319,8 +1285,8 @@ export async function generateBrief(
 
   // Save memory for future briefs
   // Extracting a handful of facts from data that has already been read is
-  // exactly the kind of work the cheap model is for. Running it on the brief
-  // model cost more per day than the brief itself did on some runs.
+  // housekeeping, not writing. Running it on the brief model cost more per day
+  // than the brief itself did on some runs.
   await saveMemory(client, CRITIQUE_MODEL, dataPayload, outputDir);
 
   // Carry the plan out in Todoist (real runs only), then put it on the page.

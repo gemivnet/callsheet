@@ -219,15 +219,17 @@ callsheet/
 
 ## Cost
 
-Each brief makes one call on your configured model, plus small housekeeping
-calls (memory, fact check, auto-close) on Claude Haiku 5.5 that together cost a
-fraction of a cent. A two-account household running most connectors sends
-roughly 60K input tokens to the brief model.
+Each brief makes one call on your configured model, plus four housekeeping
+calls (living context, memory, fact check, auto-close) on Claude Opus 5.5. A
+busy two-account household running most connectors sends roughly 85K input
+tokens to the brief model and about 200K more to the housekeeping passes, which
+come to about $27 of the monthly figures below whichever model writes the brief.
 
-| Brief model | Per brief | Per month |
-|-------------|-----------|-----------|
-| Sonnet 5.5 (default) | ~$0.25 | ~$7.50 |
-| Opus 5.5 | ~$0.50 | ~$15 |
+| Brief model | Per day | Per month |
+|-------------|---------|-----------|
+| Fable 5.1 (default) | ~$1.85 | ~$55 |
+| Opus 5.5 | ~$1.25 | ~$38 |
+| Sonnet 5.5 | ~$1.10 | ~$33 |
 
 Connector data volume is the main lever — the **Usage** page in the dashboard
 shows your actual numbers.

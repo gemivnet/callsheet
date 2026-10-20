@@ -6,7 +6,7 @@
  * in context.ts catches prose whose dates have all passed, but not a change
  * the prose never anticipated.
  *
- * Each real run, a cheap model compares the household context with the
+ * Each real run, the housekeeping model compares the household context with the
  * morning's data and proposes changes: a new fact the data establishes (an
  * offer letter, a booked trip), retiring a learned fact that has stopped being
  * true, or flagging a config entry the data contradicts. Every proposal must
@@ -22,7 +22,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BriefItem, CallsheetConfig } from './types.js';
 import { shiftYmd } from './dates.js';
-import { extractResponseText, normaliseForQuote } from './llm.js';
+import { createMessage, extractResponseText, normaliseForQuote } from './llm.js';
 import { logUsage } from './usage.js';
 
 /** How long a learned fact lasts when the model gives no end date. */
@@ -305,7 +305,7 @@ export async function reviewLivingContext(
   const entries = configEntries(config);
   try {
     const payload = reviewPayload(dataPayload);
-    const response = await client.messages.create({
+    const response = await createMessage(client, {
       model,
       max_tokens: options.maxTokens ?? 8_000,
       output_config: {

@@ -3,6 +3,54 @@
  * modules core.ts depends on can use them without an import cycle.
  */
 
+import type Anthropic from '@anthropic-ai/sdk';
+
+/**
+ * Models that accept the server-side refusal fallback. On these, a request a
+ * safety classifier declines is re-run on Anthropic's recommended fallback
+ * model inside the same call instead of coming back empty — a household brief
+ * full of medical and financial detail is exactly the kind of payload a
+ * classifier can occasionally trip on, and the housekeeping passes read the
+ * same data.
+ */
+const SERVER_FALLBACK_MODELS: ReadonlySet<string> = new Set([
+  'claude-sonnet-5-5',
+  'claude-opus-5-5',
+  'claude-opus-5',
+  'claude-fable-5-1',
+]);
+
+/** True when `model` accepts `fallbacks: "default"`. */
+export function supportsServerFallback(model: string): boolean {
+  return SERVER_FALLBACK_MODELS.has(model);
+}
+
+/** The parts of a Messages API response the pipeline reads, from either endpoint. */
+export interface ModelResponse {
+  content: { type: string; text?: string }[];
+  stop_reason?: string | null;
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+/**
+ * Send one request, opting into the server-side refusal fallback when the
+ * model takes it. The fallback is a beta parameter, so those models go through
+ * the beta endpoint; the response carries the same content, stop_reason and
+ * usage either way.
+ */
+export function createMessage(
+  client: Anthropic,
+  params: Anthropic.MessageCreateParamsNonStreaming,
+): Promise<ModelResponse> {
+  return supportsServerFallback(params.model)
+    ? client.beta.messages.create({
+        ...(params as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming),
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+      })
+    : client.messages.create(params);
+}
+
 /**
  * Strip Markdown code fences from a string before JSON.parse.
  *

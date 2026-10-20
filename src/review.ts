@@ -23,7 +23,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { Brief, BriefItem } from './types.js';
 import { logUsage } from './usage.js';
-import { extractResponseText, normaliseForQuote } from './llm.js';
+import { createMessage, extractResponseText, normaliseForQuote } from './llm.js';
 
 // ---------------------------------------------------------------------------
 // Duplication — in code
@@ -137,7 +137,7 @@ const FACT_SCHEMA = {
 const FACT_CHECK_PAYLOAD_CHARS = 400_000;
 
 /**
- * Ask a small model for statements the data contradicts. Returns its raw
+ * Ask the housekeeping model for statements the data contradicts. Returns its raw
  * findings; nothing here is trusted until verifyFactIssues has checked it.
  * Never throws.
  */
@@ -150,7 +150,7 @@ export async function factCheckBrief(
   options: { maxTokens?: number; warn?: (message: string) => void } = {},
 ): Promise<FactIssue[]> {
   try {
-    const response = await client.messages.create({
+    const response = await createMessage(client, {
       model,
       max_tokens: options.maxTokens ?? 8_000,
       output_config: {
