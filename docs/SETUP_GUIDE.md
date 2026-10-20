@@ -136,8 +136,9 @@ In `config.yaml`, set the `model` field:
 
 ```yaml
 # The default: the most capable model, and the best at connecting dots across
-# sources (roughly $0.30-0.95/day for the brief, depending on how much calendar,
-# email and task data the household has)
+# sources (roughly $0.60-1.25/day for the brief, depending on how much calendar,
+# email and task data the household has; it reasons at more length than the
+# others, so output is a bigger share of its cost)
 model: claude-fable-5-1
 
 # Close behind for well under half the brief's cost
@@ -872,8 +873,8 @@ Rough monthly costs at one brief/day, including those passes:
 
 | Brief input tokens | Fable 5.1 | Opus 5.5 | Sonnet 5.5 |
 |---|---|---|---|
-| ~20K (light) | ~$17 | ~$12 | ~$10 |
-| ~50K (typical) | ~$35 | ~$24 | ~$21 |
-| ~85K (busy) | ~$56 | ~$39 | ~$33 |
+| ~20K (light) | ~$26 | ~$12 | ~$10 |
+| ~50K (typical) | ~$44 | ~$24 | ~$21 |
+| ~85K (busy) | ~$65 | ~$39 | ~$33 |
 
 The biggest cost lever is connector data volume. Home Assistant with all sensors can easily be 15K+ tokens. Filter to specific entities to keep costs down.

@@ -227,7 +227,7 @@ come to about $27 of the monthly figures below whichever model writes the brief.
 
 | Brief model | Per day | Per month |
 |-------------|---------|-----------|
-| Fable 5.1 (default) | ~$1.85 | ~$55 |
+| Fable 5.1 (default) | ~$2.15 | ~$65 |
 | Opus 5.5 | ~$1.25 | ~$38 |
 | Sonnet 5.5 | ~$1.10 | ~$33 |
 

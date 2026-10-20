@@ -1,8 +1,8 @@
 # callsheet config
 # Copy to config.yaml and customize for your household.
 
-# Claude model that writes the brief. Fable 5.1 is the default (about $55/month for a
-# busy two-account household, about half of it the housekeeping passes, which always
+# Claude model that writes the brief. Fable 5.1 is the default (about $65/month for a
+# busy two-account household, about $27 of it the housekeeping passes, which always
 # run on Opus 5.5). Opus 5.5 (~$38/month) or Sonnet 5.5 (~$33/month) cost less.
 model: claude-fable-5-1
 
