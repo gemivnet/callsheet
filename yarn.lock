@@ -53,9 +53,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@anthropic-ai/sdk@npm:0.135.0":
-  version: 0.135.0
-  resolution: "@anthropic-ai/sdk@npm:0.135.0"
+"@anthropic-ai/sdk@npm:1.2.0":
+  version: 1.2.0
+  resolution: "@anthropic-ai/sdk@npm:1.2.0"
   dependencies:
     "@opentelemetry/api": "npm:^1.4.1"
     json-schema-to-ts: "npm:^3.1.1"
@@ -67,7 +67,7 @@ __metadata:
       optional: true
   bin:
     anthropic-ai-sdk: bin/cli
-  checksum: 10c0/82def0d9e9eb69deb47bdbfcc5c57b31fa5ecf8ae36f1546fd3ade65836e18155b2f8b364153069d26d4e5aa04b91ff20239c807369922cda6df9f6e8eb48c6e
+  checksum: 10c0/9293ce9fcaee440791271fc6b0d044de077ac2a9b6ef84d79f7a98b5ea44ff58f72c4dbb07616fa203fc163c2032b299332488e05a3d6dd825110c4fcff61f5a
   languageName: node
   linkType: hard
 
@@ -3212,7 +3212,7 @@ __metadata:
   resolution: "callsheet@workspace:."
   dependencies:
     "@actual-app/api": "npm:^26.10.0"
-    "@anthropic-ai/sdk": "npm:0.135.0"
+    "@anthropic-ai/sdk": "npm:1.2.0"
     "@changesets/cli": "npm:^3.0.3"
     "@eslint/js": "npm:^10.0.1"
     "@react-pdf/renderer": "npm:^4.9.0"
