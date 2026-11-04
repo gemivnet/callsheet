@@ -5,51 +5,51 @@ __metadata:
   version: 8
   cacheKey: 10c0
 
-"@actual-app/api@npm:^26.10.0":
-  version: 26.10.0
-  resolution: "@actual-app/api@npm:26.10.0"
+"@actual-app/api@npm:^26.11.0":
+  version: 26.11.0
+  resolution: "@actual-app/api@npm:26.11.0"
   dependencies:
-    "@actual-app/core": "npm:26.10.0"
-    "@actual-app/crdt": "npm:3.1.3"
+    "@actual-app/core": "npm:26.11.0"
+    "@actual-app/crdt": "npm:3.1.4"
     better-sqlite3: "npm:^13.0.3"
     compare-versions: "npm:^6.1.1"
-    uuid: "npm:^14.0.2"
-  checksum: 10c0/9a46aa65b5de1a19e8845e3a410c4cd152ae757646e356b1ac1fd35862d5f276a3ed9a07b0fdc9c401d12066863b8010cc7ce39559c0dbdde6e4a6d91f63c3ff
+    uuid: "npm:^14.0.3"
+  checksum: 10c0/7780ccb08c326a86e94353e9f22ea20f50a004b38c29998a9c16c9aad872aaeb170a68247887c6591503dfe7948fa9a500a274d89afb5c111e4a6ac4972eb319
   languageName: node
   linkType: hard
 
-"@actual-app/core@npm:26.10.0":
-  version: 26.10.0
-  resolution: "@actual-app/core@npm:26.10.0"
+"@actual-app/core@npm:26.11.0":
+  version: 26.11.0
+  resolution: "@actual-app/core@npm:26.11.0"
   dependencies:
     "@jlongster/sql.js": "npm:^1.6.7"
     "@rschedule/core": "npm:^1.5.0"
     "@rschedule/standard-date-adapter": "npm:^1.5.0"
     absurd-sql: "npm:0.0.54"
     better-sqlite3: "npm:^13.0.3"
-    csv-parse: "npm:^7.0.2"
-    csv-stringify: "npm:^6.8.1"
+    csv-parse: "npm:^7.0.3"
+    csv-stringify: "npm:^6.9.0"
     date-fns: "npm:^4.4.0"
-    es-toolkit: "npm:^1.49.0"
+    es-toolkit: "npm:^1.52.0"
     fflate: "npm:^0.8.3"
-    handlebars: "npm:^4.7.9"
-    hyperformula: "npm:^3.3.0"
-    lru-cache: "npm:^11.5.2"
+    handlebars: "npm:^4.7.10"
+    hyperformula: "npm:^3.5.0"
+    lru-cache: "npm:^11.5.3"
     mitt: "npm:^3.0.1"
-    uuid: "npm:^14.0.2"
+    uuid: "npm:^14.0.3"
     xml2js: "npm:^0.6.2"
-  checksum: 10c0/78f618b055d4c62001d0bb466b478841470b414d9df35dd9ae07cbbb371c0db609a38c57ec8aba04bea0eb325aefc6c8d237f43c1b60eb554137d219caf83379
+  checksum: 10c0/e908fede2fa78c16d2eee4fc005818fd0b5027018d4d5cbfe6bcdfdc098e432f9a26d8d890caab9fb9b59ca77e6095c20de14d508c22d3201bdd20f2419818e4
   languageName: node
   linkType: hard
 
-"@actual-app/crdt@npm:3.1.3":
-  version: 3.1.3
-  resolution: "@actual-app/crdt@npm:3.1.3"
+"@actual-app/crdt@npm:3.1.4":
+  version: 3.1.4
+  resolution: "@actual-app/crdt@npm:3.1.4"
   dependencies:
-    "@bufbuild/protobuf": "npm:^2.12.1"
+    "@bufbuild/protobuf": "npm:^2.16.0"
     murmurhash: "npm:^2.0.1"
-    uuid: "npm:^14.0.2"
-  checksum: 10c0/b89a23de8b71cef30f4452971b13400486f25aed143caedc9e55c5df296ac03af53ac8f301de8d861f4a1aa37bb48653fadbc84401d433d25ac1e86cd369097e
+    uuid: "npm:^14.0.3"
+  checksum: 10c0/c91b37bfefb2f4387bf153dbb0d907b3f763140973a585ae1fc1b95b5797dcb2897ea379b8bf660190e82d39a7f655b3321fb0b2133c9d0643a0d10b1c65c4b5
   languageName: node
   linkType: hard
 
@@ -461,10 +461,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@bufbuild/protobuf@npm:^2.12.1":
-  version: 2.14.0
-  resolution: "@bufbuild/protobuf@npm:2.14.0"
-  checksum: 10c0/29f434e45d484012c7b6ecfa1265b2ca430fb88aed3dc222a31f553ab1ee4ac81ddbf79f88a1665353af5703bfd5d0db25a22eb378a641667938e7d8aa4c1c47
+"@bufbuild/protobuf@npm:^2.16.0":
+  version: 2.16.0
+  resolution: "@bufbuild/protobuf@npm:2.16.0"
+  checksum: 10c0/ba3bc677e801a71d9cf0bdc138174144e493706efec3a47865eb07e956423315a80ff12301f6835d352202ae4d6599f2946a7c67338cf0079ed2a06af1a18097
   languageName: node
   linkType: hard
 
@@ -3211,7 +3211,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "callsheet@workspace:."
   dependencies:
-    "@actual-app/api": "npm:^26.10.0"
+    "@actual-app/api": "npm:^26.11.0"
     "@anthropic-ai/sdk": "npm:0.135.0"
     "@changesets/cli": "npm:^3.0.3"
     "@eslint/js": "npm:^10.0.1"
@@ -3464,17 +3464,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"csv-parse@npm:^7.0.2":
+"csv-parse@npm:^7.0.3":
   version: 7.0.3
   resolution: "csv-parse@npm:7.0.3"
   checksum: 10c0/90d444df5bb14a5531fb87163be5236951a43092934c9ea10e1308cceefdd692c8c0b49f93c616a92a1c9695f371a376268bf45325bb88f60a1328274748cc25
   languageName: node
   linkType: hard
 
-"csv-stringify@npm:^6.8.1":
-  version: 6.8.3
-  resolution: "csv-stringify@npm:6.8.3"
-  checksum: 10c0/55f8978ea09ebf7c259c4cf27432d831ea4f39afcef4ac674ac59f0ca3d3f8ac3f198047dd6e577a0d8b6d554b05776e900416a22424916b94c871672e6184ee
+"csv-stringify@npm:^6.9.0":
+  version: 6.9.0
+  resolution: "csv-stringify@npm:6.9.0"
+  checksum: 10c0/0f27fed691c05b44d6a6aa059f31943cce980317bb92ee6ad44248a40497be5fc9233acb6e53437d1c01adf94c1e04fab0220d047843642843b55ac4f38dbb91
   languageName: node
   linkType: hard
 
@@ -3696,9 +3696,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"es-toolkit@npm:^1.49.0":
-  version: 1.51.0
-  resolution: "es-toolkit@npm:1.51.0"
+"es-toolkit@npm:^1.52.0":
+  version: 1.53.1
+  resolution: "es-toolkit@npm:1.53.1"
   dependenciesMeta:
     "@trivago/prettier-plugin-sort-imports@4.3.0":
       unplugged: true
@@ -3706,7 +3706,7 @@ __metadata:
       unplugged: true
     vitepress-plugin-sandpack@1.1.4:
       unplugged: true
-  checksum: 10c0/ad519228a317a27b11144b582c1168c552143dd58ce4e62be50c185de48c69dea996f6ad6ebc518129ebd58c34da150c1a2134d4a3d7cdc75120c626e57ce7c4
+  checksum: 10c0/d91b1585acbc7768adbf8767b6c554c4112658fda9ccd5d244db5a853e9ee336dd1269422bc21ff63ec798d39c343b4dde5968c2a05c153163c5b91c2de5abcd
   languageName: node
   linkType: hard
 
@@ -4632,24 +4632,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"handlebars@npm:^4.7.9":
-  version: 4.7.9
-  resolution: "handlebars@npm:4.7.9"
-  dependencies:
-    minimist: "npm:^1.2.5"
-    neo-async: "npm:^2.6.2"
-    source-map: "npm:^0.6.1"
-    uglify-js: "npm:^3.1.4"
-    wordwrap: "npm:^1.0.0"
-  dependenciesMeta:
-    uglify-js:
-      optional: true
-  bin:
-    handlebars: bin/handlebars
-  checksum: 10c0/22f8105a7e68e81aff2662bb434edf05f757d21d850731d71cec886d69c10cd33d3c43e34b2892968ec62de8241611851d3d0674c8ef324ea3e01dc66262faa9
-  languageName: node
-  linkType: hard
-
 "has-flag@npm:^4.0.0":
   version: 4.0.0
   resolution: "has-flag@npm:4.0.0"
@@ -4784,13 +4766,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"hyperformula@npm:^3.3.0":
-  version: 3.4.0
-  resolution: "hyperformula@npm:3.4.0"
+"hyperformula@npm:^3.5.0":
+  version: 3.5.0
+  resolution: "hyperformula@npm:3.5.0"
   dependencies:
     chevrotain: "npm:^6.5.0"
     tiny-emitter: "npm:^2.1.0"
-  checksum: 10c0/349f2abc389e1b3a3a22effaf73d30ca8848cf24d1674b3ac137618d4f75a503eabf522e2ba6d170babfa80627638cd5da91f8498f5f36dda52b04fb57768eaa
+  checksum: 10c0/0176a2307f21eb8af2333d2dac1f97bf7a08402ddb44bf6548676af48b06a9cacd42dc86447c829ea0f6c39d946fc4e890833d08d83eafd40781afd864cd6f68
   languageName: node
   linkType: hard
 
@@ -5770,10 +5752,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"lru-cache@npm:^11.5.2":
-  version: 11.5.2
-  resolution: "lru-cache@npm:11.5.2"
-  checksum: 10c0/ece1ad731f5b655e85d67047d04bfc13823dc77aa61c5454924a9869ba600a0104e39cc33d726021feef812bc347ca34a5608a5eb1972a5dd0870b7ecd42c3f2
+"lru-cache@npm:^11.5.3":
+  version: 11.5.3
+  resolution: "lru-cache@npm:11.5.3"
+  checksum: 10c0/2ad9bce6343a3544a1fd15364d8b35609aa52b2593d21fdc4877cabfe003b0f3deca4f9d6e9d13262f06e9e3d159de45c0a2f3edfc3adb46192333b5f146d8ed
   languageName: node
   linkType: hard
 
@@ -5907,7 +5889,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"minimist@npm:^1.2.5, minimist@npm:^1.2.8":
+"minimist@npm:^1.2.8":
   version: 1.2.8
   resolution: "minimist@npm:1.2.8"
   checksum: 10c0/19d3fcdca050087b84c2029841a093691a91259a47def2f18222f41e7645a0b7c44ef4b40e88a1e58a40c84d2ef0ee6047c55594d298146d0eb3f6b737c20ce6
@@ -7513,7 +7495,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"uuid@npm:^14.0.0, uuid@npm:^14.0.2":
+"uuid@npm:^14.0.0, uuid@npm:^14.0.3":
   version: 14.0.3
   resolution: "uuid@npm:14.0.3"
   bin:
