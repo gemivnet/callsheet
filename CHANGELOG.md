@@ -1,5 +1,11 @@
 # callsheet
 
+## 1.10.1
+
+### Patch Changes
+
+- b0a1196: Updated the Actual Budget client to 26.11 so it stays in step with current Actual servers.
+
 ## 1.10.0
 
 ### Minor Changes
