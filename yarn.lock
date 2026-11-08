@@ -2889,13 +2889,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"argparse@npm:^3.0.3":
-  version: 3.0.3
-  resolution: "argparse@npm:3.0.3"
-  checksum: 10c0/8d715f1c4bb0aa14a8b8ee749d6ab6f12d380caba33139d527cac79988af152cfd160f152c3964c76c7ea473f1899bd0989bd1e9cfdba22e68f50b6a4b5c9d0d
-  languageName: node
-  linkType: hard
-
 "async-function@npm:^1.0.0":
   version: 1.0.0
   resolution: "async-function@npm:1.0.0"
@@ -3234,7 +3227,6 @@ __metadata:
     husky: "npm:^9.1.7"
     jest: "npm:^30.5.2"
     jest-junit: "npm:^17.0.0"
-    js-yaml: "npm:^5.5.0"
     lint-staged: "npm:^17.6.0"
     node-cron: "npm:^4.6.0"
     prettier: "npm:^3.9.10"
@@ -5524,25 +5516,14 @@ __metadata:
   linkType: hard
 
 "js-yaml@npm:^3.13.1":
-  version: 3.14.2
-  resolution: "js-yaml@npm:3.14.2"
+  version: 3.15.2
+  resolution: "js-yaml@npm:3.15.2"
   dependencies:
     argparse: "npm:^1.0.7"
     esprima: "npm:^4.0.0"
   bin:
     js-yaml: bin/js-yaml.js
-  checksum: 10c0/3261f25912f5dd76605e5993d0a126c2b6c346311885d3c483706cd722efe34f697ea0331f654ce27c00a42b426e524518ec89d65ed02ea47df8ad26dcc8ce69
-  languageName: node
-  linkType: hard
-
-"js-yaml@npm:^5.5.0":
-  version: 5.5.0
-  resolution: "js-yaml@npm:5.5.0"
-  dependencies:
-    argparse: "npm:^3.0.3"
-  bin:
-    js-yaml: bin/js-yaml.mjs
-  checksum: 10c0/311619f44dd788657e9b81d4b5c60ff367441f364045e3796bc604a41f25819852748fb173ae82f2553d53cb609d7fdb79e0a74148892cb2c085eebe91839b53
+  checksum: 10c0/e341df211dece9d4b784849647ad7568b5b6a58a9ee58ead750482316d83276387343649fe4b71522705dc6c76acf97718588f23dc19443833ef3e75033af967
   languageName: node
   linkType: hard
 
