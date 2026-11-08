@@ -110,7 +110,7 @@ export function printerState(printer: string): string {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    return (typeof out === 'string' ? out : '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    return (typeof out === 'string' ? out : '').replace(/\s+/g, ' ').trim().slice(0, 240);
   } catch {
     return '';
   }
