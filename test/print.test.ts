@@ -140,6 +140,12 @@ describe('printerState', () => {
     expect(print.printerState('Office')).toBe('printer Office is idle. enabled since today');
   });
 
+  it('keeps a long reason intact up to 240 chars', () => {
+    const reason = 'Paused - ' + 'x'.repeat(150);
+    scriptCups({ state: () => `printer Office disabled since today - ${reason}\n` });
+    expect(print.printerState('Office')).toContain(reason);
+  });
+
   it('returns an empty string when lpstat fails', () => {
     mockExecFileSync.mockImplementation(() => {
       throw new Error('nope');
