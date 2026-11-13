@@ -458,7 +458,7 @@ describe('weather connector', () => {
       const urls: string[] = [];
       mockFetch((url) => {
         urls.push(url);
-        if (url.startsWith('http://hub.test')) return Promise.reject(new Error('refused'));
+        if (new URL(url).hostname === 'hub.test') return Promise.reject(new Error('refused'));
         if (url.includes('/points/')) {
           return Promise.resolve({
             ok: true,
@@ -487,7 +487,7 @@ describe('weather connector', () => {
 
     it('falls back to NWS when the hub answers with an empty forecast', async () => {
       mockFetch((url) => {
-        if (url.startsWith('http://hub.test')) {
+        if (new URL(url).hostname === 'hub.test') {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ forecast: [], alerts: [], alerts_known: true }),
