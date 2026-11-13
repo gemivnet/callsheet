@@ -401,6 +401,104 @@ describe('weather connector', () => {
     });
   });
 
+  describe('weather hub source_url', () => {
+    const hubConfig: ConnectorConfig = { ...baseConfig, source_url: 'http://hub.test:9300/' };
+    const hubBody = {
+      forecast: [
+        {
+          name: 'Tonight',
+          temperature: 34,
+          unit: 'F',
+          wind: '10 mph N',
+          shortForecast: 'Cloudy',
+          detailedForecast: 'Cloudy, low 34.',
+          precipitationChance: 20,
+        },
+      ],
+      alerts: [
+        {
+          event: 'Wind Advisory',
+          severity: 'Moderate',
+          urgency: 'Expected',
+          headline: 'Wind Advisory until 6 AM',
+          onset: '2026-01-02T03:00:00Z',
+          ends: '2026-01-02T12:00:00Z',
+          expires: '2026-01-02T09:00:00Z',
+        },
+      ],
+      alerts_known: true,
+    };
+
+    it('uses the hub first and never calls NWS', async () => {
+      const urls: string[] = [];
+      mockFetch((url) => {
+        urls.push(url);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(hubBody) });
+      });
+      const result = await create(hubConfig).fetch();
+      expect(urls).toEqual(['http://hub.test:9300/api/callsheet']);
+      expect((result.data.periods as { name: string }[])[0].name).toBe('Tonight');
+      expect((result.data.alerts as { event: string }[])[0].event).toBe('Wind Advisory');
+      expect(result.priorityHint).toBe('high');
+    });
+
+    it('reports alerts as unavailable when the hub could not check them', async () => {
+      mockFetch(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ...hubBody, alerts: [], alerts_known: false }),
+        }),
+      );
+      const result = await create(hubConfig).fetch();
+      expect(result.data.alertsUnavailable).toBe(true);
+      expect(result.data.alerts).toEqual([]);
+    });
+
+    it('falls back to NWS when the hub is down', async () => {
+      const urls: string[] = [];
+      mockFetch((url) => {
+        urls.push(url);
+        if (url.startsWith('http://hub.test')) return Promise.reject(new Error('refused'));
+        if (url.includes('/points/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                properties: { forecast: 'https://api.weather.gov/gridpoints/X/1,1/forecast' },
+              }),
+          });
+        }
+        if (url.includes('/alerts/')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ features: [] }) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              properties: { periods: [{ name: 'Today', temperature: 60, temperatureUnit: 'F' }] },
+            }),
+        });
+      });
+      const result = await create(hubConfig).fetch();
+      expect(urls[0]).toContain('hub.test');
+      expect(urls.some((u) => u.includes('api.weather.gov/points'))).toBe(true);
+      expect((result.data.periods as { name: string }[])[0].name).toBe('Today');
+    });
+
+    it('falls back to NWS when the hub answers with an empty forecast', async () => {
+      mockFetch((url) => {
+        if (url.startsWith('http://hub.test')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ forecast: [], alerts: [], alerts_known: true }),
+          });
+        }
+        return Promise.reject(new Error('nws down too'));
+      });
+      await expect(create(hubConfig).fetch()).rejects.toThrow();
+    });
+  });
+
   describe('validate', () => {
     it('should pass when lat/lon configured', () => {
       const checks = validate(baseConfig);
@@ -410,6 +508,11 @@ describe('weather connector', () => {
     it('should fail when lat/lon missing', () => {
       const checks = validate({ enabled: true });
       expect(checks.some(([icon]) => icon === FAIL)).toBe(true);
+    });
+
+    it('mentions the hub when source_url is set', () => {
+      const checks = validate({ ...baseConfig, source_url: 'http://hub.test:9300' });
+      expect(checks.some(([, name]) => name === 'Weather hub')).toBe(true);
     });
 
     it('should include location in check message', () => {
