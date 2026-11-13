@@ -3108,7 +3108,7 @@ __metadata:
     eslint-plugin-prettier: "npm:^5.5.7"
     express: "npm:^5.3.0"
     google-auth-library: "npm:^11.3.3"
-    googleapis: "npm:^186.0.0"
+    googleapis: "npm:^189.0.0"
     husky: "npm:^9.1.7"
     jest: "npm:^30.5.2"
     jest-junit: "npm:^17.0.0"
@@ -4422,13 +4422,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"googleapis@npm:^186.0.0":
-  version: 186.0.0
-  resolution: "googleapis@npm:186.0.0"
+"googleapis@npm:^189.0.0":
+  version: 189.0.0
+  resolution: "googleapis@npm:189.0.0"
   dependencies:
     google-auth-library: "npm:^11.0.0"
     googleapis-common: "npm:^9.0.0"
-  checksum: 10c0/24fa95afa7d29947faca6f670e58969de210b4310e35befc92db32daa6e15890ea5fa2803723cfe52c2572cb99c72e1ed74c0176b47e17d472c703502a34b0cf
+  checksum: 10c0/075587df060557f2fc23690b51c09b446b94a37e0d96c96bbed45747623bb856e93b62021a8c53db7f18f05bdf484750ac1ae944e957a030ee511d3f1ceb5cf8
   languageName: node
   linkType: hard
 
