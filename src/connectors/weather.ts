@@ -85,6 +85,46 @@ async function fetchAlerts(lat: number, lon: number, tz?: string): Promise<NwsAl
   }
 }
 
+/**
+ * The household weather hub (optional `source_url`): one local service that already merged NWS with its
+ * backups, so a failing upstream does not blank the brief. Any failure returns null and the caller goes
+ * straight to NWS, so the hub can only ever add a source, never remove one.
+ */
+async function fetchFromHub(
+  baseUrl: string | undefined,
+  tz?: string,
+): Promise<{ forecast: Record<string, unknown>[]; alerts: NwsAlert[] | null } | null> {
+  if (!baseUrl) return null;
+  try {
+    const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/callsheet`, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      forecast?: Record<string, unknown>[];
+      alerts?: Record<string, unknown>[];
+      alerts_known?: boolean;
+    };
+    if (!Array.isArray(data.forecast) || data.forecast.length === 0) return null;
+    // "No alerts" and "could not check" are different answers: only a known empty list means none.
+    const alerts = data.alerts_known
+      ? (data.alerts ?? []).map((a) => ({
+          event: (a.event as string) ?? '',
+          severity: (a.severity as string) ?? '',
+          urgency: (a.urgency as string) ?? '',
+          headline: (a.headline as string) ?? '',
+          onset: alertTime(a.onset, tz),
+          ends: alertTime(a.ends, tz),
+          messageExpires: alertTime(a.expires, tz),
+        }))
+      : null;
+    return { forecast: data.forecast, alerts };
+  } catch {
+    return null;
+  }
+}
+
 export function create(config: ConnectorConfig): Connector {
   return {
     name: 'weather',
@@ -95,54 +135,65 @@ export function create(config: ConnectorConfig): Connector {
       const lon = config.lon as number;
       const location = (config.location as string) ?? `${lat},${lon}`;
 
-      // Step 1: Get the forecast grid endpoint for this location
-      const pointData = await retry(
-        async () => {
-          const resp = await fetch(`https://api.weather.gov/points/${lat},${lon}`, {
-            headers: HEADERS,
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!resp.ok) throw new HttpError(resp.status, `NWS points API: ${resp.status}`);
-          return (await resp.json()) as {
-            properties: { forecast: string; forecastHourly: string };
-          };
-        },
-        { retries: NWS_RETRIES, baseDelayMs: NWS_BASE_DELAY_MS, onRetry: nwsOnRetry('points') },
-      );
-      const forecastUrl = pointData.properties.forecast;
-
-      // Step 2: Get the forecast
-      const forecastData = await retry(
-        async () => {
-          const resp = await fetch(forecastUrl, {
-            headers: HEADERS,
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!resp.ok) throw new HttpError(resp.status, `NWS forecast API: ${resp.status}`);
-          return (await resp.json()) as {
-            properties: { periods: Record<string, unknown>[] };
-          };
-        },
-        { retries: NWS_RETRIES, baseDelayMs: NWS_BASE_DELAY_MS, onRetry: nwsOnRetry('forecast') },
-      );
-      const { periods } = forecastData.properties;
-
-      // Take today + tonight + tomorrow (first 3-4 periods)
-      const forecast = periods.slice(0, 4).map((p: Record<string, unknown>) => ({
-        name: p.name,
-        temperature: p.temperature,
-        unit: p.temperatureUnit,
-        wind: `${p.windSpeed} ${p.windDirection}`,
-        shortForecast: p.shortForecast,
-        detailedForecast: p.detailedForecast,
-        precipitationChance:
-          (p.probabilityOfPrecipitation as Record<string, unknown> | undefined)?.value ?? null,
-      }));
-
-      // Step 3: Get active weather alerts
       const tz = config.timezone as string | undefined;
-      const fetched = await fetchAlerts(lat, lon, tz);
-      const alerts = fetched ?? [];
+      const hub = await fetchFromHub(config.source_url as string | undefined, tz);
+      let forecast: Record<string, unknown>[];
+      let alerts: NwsAlert[];
+      let fetched: NwsAlert[] | null;
+
+      if (hub) {
+        ({ forecast } = hub);
+        fetched = hub.alerts;
+        alerts = hub.alerts ?? [];
+      } else {
+        // Step 1: Get the forecast grid endpoint for this location
+        const pointData = await retry(
+          async () => {
+            const resp = await fetch(`https://api.weather.gov/points/${lat},${lon}`, {
+              headers: HEADERS,
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (!resp.ok) throw new HttpError(resp.status, `NWS points API: ${resp.status}`);
+            return (await resp.json()) as {
+              properties: { forecast: string; forecastHourly: string };
+            };
+          },
+          { retries: NWS_RETRIES, baseDelayMs: NWS_BASE_DELAY_MS, onRetry: nwsOnRetry('points') },
+        );
+        const forecastUrl = pointData.properties.forecast;
+
+        // Step 2: Get the forecast
+        const forecastData = await retry(
+          async () => {
+            const resp = await fetch(forecastUrl, {
+              headers: HEADERS,
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (!resp.ok) throw new HttpError(resp.status, `NWS forecast API: ${resp.status}`);
+            return (await resp.json()) as {
+              properties: { periods: Record<string, unknown>[] };
+            };
+          },
+          { retries: NWS_RETRIES, baseDelayMs: NWS_BASE_DELAY_MS, onRetry: nwsOnRetry('forecast') },
+        );
+        const { periods } = forecastData.properties;
+
+        // Take today + tonight + tomorrow (first 3-4 periods)
+        forecast = periods.slice(0, 4).map((p: Record<string, unknown>) => ({
+          name: p.name,
+          temperature: p.temperature,
+          unit: p.temperatureUnit,
+          wind: `${p.windSpeed} ${p.windDirection}`,
+          shortForecast: p.shortForecast,
+          detailedForecast: p.detailedForecast,
+          precipitationChance:
+            (p.probabilityOfPrecipitation as Record<string, unknown> | undefined)?.value ?? null,
+        }));
+
+        // Step 3: Get active weather alerts
+        fetched = await fetchAlerts(lat, lon, tz);
+        alerts = fetched ?? [];
+      }
 
       const alertSummary = alerts.length
         ? `${alerts.length} active alert(s): ${alerts.map((a) => a.event).join(', ')}. `
@@ -189,6 +240,9 @@ export function validate(config: ConnectorConfig): Check[] {
     checks.push([FAIL, 'Lat/lon not configured', '']);
   }
 
+  if (config.source_url) {
+    checks.push([INFO, 'Weather hub', 'Tried first; NWS is the fallback']);
+  }
   checks.push([INFO, 'NWS API \u2014 no auth required', 'Forecast + active alerts (US only)']);
   return checks;
 }
