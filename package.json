@@ -79,5 +79,11 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1"
+  },
+  "resolutions": {
+    "minimatch@npm:^9.0.4": "^11.0.1",
+    "minimatch@npm:^10.2.2": "^11.0.1",
+    "minimatch@npm:^10.2.4": "^11.0.1",
+    "minimatch@npm:^10.2.6": "^11.0.1"
   }
 }
