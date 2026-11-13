@@ -56,8 +56,9 @@ function rejectBadDate(req: express.Request, res: express.Response): boolean {
 
 function rejectBadMonth(req: express.Request, res: express.Response): boolean {
   const month = req.query.month;
-  if (month === undefined || (typeof month === 'string' && /^\d{4}-\d{2}$/.test(month)))
+  if (month === undefined || (typeof month === 'string' && /^\d{4}-\d{2}$/.test(month))) {
     return false;
+  }
   res.status(400).json({ error: 'Invalid month, expected YYYY-MM' });
   return true;
 }
