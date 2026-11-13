@@ -12,6 +12,7 @@ import {
   normalisePhrase,
 } from '../../src/connectors/language.js';
 import { PASS, INFO } from '../../src/test-icons.js';
+import { todayYmd, shiftYmd } from '../../src/dates.js';
 import type { Brief } from '../../src/types.js';
 
 function makeTempDir(): string {
@@ -41,7 +42,7 @@ describe('language connector', () => {
 
     it('loads past phrases from history and exposes them to the prompt', async () => {
       const historyPath = join(outputDir, 'language_history.json');
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayYmd();
       writeFileSync(
         historyPath,
         JSON.stringify({
@@ -61,14 +62,13 @@ describe('language connector', () => {
 
     it('prunes entries older than history_days', async () => {
       const historyPath = join(outputDir, 'language_history.json');
-      const oldDate = new Date();
-      oldDate.setDate(oldDate.getDate() - 100);
-      const today = new Date().toISOString().slice(0, 10);
+      const oldDate = shiftYmd(todayYmd(), -100);
+      const today = todayYmd();
       writeFileSync(
         historyPath,
         JSON.stringify({
           entries: [
-            { date: oldDate.toISOString().slice(0, 10), phrase: 'Viejo', translation: 'Old' },
+            { date: oldDate, phrase: 'Viejo', translation: 'Old' },
             { date: today, phrase: 'Nuevo', translation: 'New' },
           ],
         }),
@@ -215,11 +215,11 @@ describe('language connector', () => {
       expect(history.entries.length).toBe(1);
       expect(history.entries[0].phrase).toBe('Buenas noches');
       expect(history.entries[0].translation).toBe('Good evening');
-      expect(history.entries[0].date).toBe(new Date().toISOString().slice(0, 10));
+      expect(history.entries[0].date).toBe(todayYmd());
     });
 
     it('replaces an existing same-day entry instead of duplicating', () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayYmd();
       writeFileSync(
         join(outputDir, 'language_history.json'),
         JSON.stringify({ entries: [{ date: today, phrase: 'Old', translation: 'Old' }] }),
@@ -304,15 +304,14 @@ describe('phrase history across themes', () => {
 
   it("shows every phrase taught on today's theme, beyond the recent window", async () => {
     const theme = themeForToday();
-    const old = new Date();
-    old.setDate(old.getDate() - 200);
+    const old = shiftYmd(todayYmd(), -200);
     writeFileSync(
       join(dir, 'language_history.json'),
       JSON.stringify({
         entries: [
-          { date: old.toISOString().slice(0, 10), phrase: 'Viejo', translation: 'Old', theme },
+          { date: old, phrase: 'Viejo', translation: 'Old', theme },
           {
-            date: old.toISOString().slice(0, 10),
+            date: old,
             phrase: 'Otro',
             translation: 'Other',
             theme: 'x',
@@ -331,14 +330,11 @@ describe('phrase history across themes', () => {
   });
 
   it('records the theme, keeps a year of history, and notes a repeat', () => {
-    const old = new Date();
-    old.setDate(old.getDate() - 200);
+    const old = shiftYmd(todayYmd(), -200);
     writeFileSync(
       join(dir, 'language_history.json'),
       JSON.stringify({
-        entries: [
-          { date: old.toISOString().slice(0, 10), phrase: '¡Buenos días!', translation: 'x' },
-        ],
+        entries: [{ date: old, phrase: '¡Buenos días!', translation: 'x' }],
       }),
     );
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});

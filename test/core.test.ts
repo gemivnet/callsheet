@@ -607,7 +607,7 @@ describe('saveDataPayload', () => {
   });
 
   it('should use the current date in filename', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmd();
     const path = core.saveDataPayload('{}', '/tmp/out');
     expect(path).toContain(`connector_data_${today}.json`);
   });
@@ -1729,9 +1729,7 @@ describe('generateBrief', () => {
       .mockResolvedValueOnce(mockApiResponse('[]'))
       .mockResolvedValueOnce(mockApiResponse('[]'));
 
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const yesterdayStr = shiftYmd(todayYmd(), -1);
 
     const previousBrief = {
       title: 'Yesterday Brief',
@@ -2482,9 +2480,7 @@ describe('runPipeline', () => {
       .mockResolvedValueOnce(mockApiResponse('[]'))
       .mockResolvedValueOnce(mockApiResponse('[]'));
 
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const yesterdayStr = shiftYmd(todayYmd(), -1);
 
     mockReadFileSync.mockImplementation((path: unknown) => {
       const p = path as string;
