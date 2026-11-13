@@ -54,6 +54,15 @@ function rejectBadDate(req: express.Request, res: express.Response): boolean {
   return true;
 }
 
+function rejectBadMonth(req: express.Request, res: express.Response): boolean {
+  const month = req.query.month;
+  if (month === undefined || (typeof month === 'string' && /^\d{4}-\d{2}$/.test(month))) {
+    return false;
+  }
+  res.status(400).json({ error: 'Invalid month, expected YYYY-MM' });
+  return true;
+}
+
 export function createApp(): express.Express {
   const app = express();
   app.use(express.json());
@@ -421,7 +430,7 @@ export function createApp(): express.Express {
     } catch (e) {
       pendingOAuth.delete(state);
       const message = e instanceof Error ? e.message : String(e);
-      res.status(500).send(`Auth failed: ${message}`);
+      res.status(500).type('text/plain').send(`Auth failed: ${message}`);
     }
   });
 
@@ -512,6 +521,7 @@ export function createApp(): express.Express {
   // ─── Usage ─────────────────────────────────────────────────────────────────
 
   app.get('/api/usage', (req, res) => {
+    if (rejectBadMonth(req, res)) return;
     const month = typeof req.query.month === 'string' ? req.query.month : undefined;
     const outputDir = getOutputDir();
 
@@ -525,6 +535,7 @@ export function createApp(): express.Express {
   });
 
   app.get('/api/usage/history', (req, res) => {
+    if (rejectBadMonth(req, res)) return;
     const month = typeof req.query.month === 'string' ? req.query.month : undefined;
     const outputDir = getOutputDir();
 

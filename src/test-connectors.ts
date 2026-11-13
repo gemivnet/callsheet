@@ -110,8 +110,7 @@ export async function runTests(config: CallsheetConfig, only?: string[]): Promis
   // Anthropic key
   const apiKey = process.env.ANTHROPIC_API_KEY ?? '';
   if (apiKey) {
-    const masked = apiKey.slice(0, 12) + '...' + apiKey.slice(-4);
-    line(PASS, 'ANTHROPIC_API_KEY is set', masked);
+    line(PASS, 'ANTHROPIC_API_KEY is set', `${apiKey.length} characters`);
     if (!apiKey.startsWith('sk-ant-')) {
       line(WARN, "Key doesn't start with sk-ant-", 'Might be invalid');
     }
