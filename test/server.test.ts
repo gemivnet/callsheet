@@ -509,6 +509,15 @@ describe('GET /api/usage', () => {
   });
 });
 
+describe('usage month validation', () => {
+  it('rejects a month that is not YYYY-MM', async () => {
+    for (const path of ['/api/usage', '/api/usage/history']) {
+      const res = await request(server, 'GET', `${path}?month=..%2F..%2Fetc`);
+      expect(res.status).toBe(400);
+    }
+  });
+});
+
 describe('GET /api/usage/history', () => {
   it('returns usage history', async () => {
     const res = await request(server, 'GET', '/api/usage/history');

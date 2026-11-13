@@ -79,6 +79,7 @@ function getUsageDir(outputDir: string): string {
 
 function getMonthlyFilePath(outputDir: string, month?: string): string {
   const m = month ?? new Date().toISOString().slice(0, 7); // YYYY-MM
+  if (!/^\d{4}-\d{2}$/.test(m)) throw new Error('Invalid month, expected YYYY-MM');
   return join(getUsageDir(outputDir), `usage_${m}.json`);
 }
 
