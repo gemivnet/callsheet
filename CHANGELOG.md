@@ -1,5 +1,15 @@
 # callsheet
 
+## 1.11.0
+
+### Minor Changes
+
+- b54dd94: Weather connector: optional `source_url` points it at a local weather service that merges several sources. It is tried first with a short timeout; any failure or empty answer falls back to the direct NWS calls, so the setting can only add a source. A hub that could not check alerts is reported as "alerts unavailable", never as "no alerts".
+
+### Patch Changes
+
+- f7c1196: The usage endpoints now reject a `month` that is not `YYYY-MM` before it reaches a file path, the OAuth failure page is served as plain text, and the connector self-test no longer prints any part of the Anthropic key.
+
 ## 1.10.2
 
 ### Patch Changes
