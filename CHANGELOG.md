@@ -1,5 +1,11 @@
 # callsheet
 
+## 1.11.1
+
+### Patch Changes
+
+- ce18bf8: Published Docker images now carry `org.opencontainers.image.revision` (the source commit) and `org.opencontainers.image.created` labels, so the deployed commit can be read straight from the image.
+
 ## 1.11.0
 
 ### Minor Changes
