@@ -73,12 +73,12 @@
     "jest": "^30.5.2",
     "jest-junit": "^17.0.0",
     "lint-staged": "^17.6.0",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "ts-jest": "^29.4.15",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.1"
+    "typescript-eslint": "^8.72.2"
   },
   "resolutions": {
     "minimatch@npm:^9.0.4": "^11.0.1",
