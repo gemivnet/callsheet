@@ -43,18 +43,18 @@
   },
   "dependencies": {
     "@actual-app/api": "^26.11.0",
-    "@anthropic-ai/sdk": "1.6.0",
+    "@anthropic-ai/sdk": "1.8.0",
     "@react-pdf/renderer": "^4.9.0",
-    "commander": "^15.0.0",
-    "dotenv": "^18.0.9",
+    "commander": "^15.1.0",
+    "dotenv": "^18.0.10",
     "express": "^5.3.0",
-    "google-auth-library": "^11.3.3",
+    "google-auth-library": "^11.3.4",
     "googleapis": "^189.0.0",
     "js-yaml": "^5.5.0",
     "node-cron": "^4.6.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "suncalc": "^2.1.2"
+    "suncalc": "^2.1.4"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
